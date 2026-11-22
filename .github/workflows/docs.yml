@@ -52,7 +52,9 @@ jobs:
         run: |
           set -o pipefail
           ./check.sh 2>&1 | tee /tmp/docs-check.log
-          if grep -q '跳过' /tmp/docs-check.log; then
+          # 只匹配"闸门被跳过"的两种行：工具跳过协议 "  --  ...跳过..." 与汇总行 "跳过  <gate>"。
+          # 不能裸 grep "跳过"：示例闸门正常输出里就有"片段 51 段跳过"。
+          if grep -qE '^  --|^跳过  ' /tmp/docs-check.log; then
             echo "::error::文档闸门出现跳过：CI 必须真跑（检查 EXTC/EXTC_SRC 与编译器构建）"
             exit 1
           fi
