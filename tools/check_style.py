@@ -25,6 +25,9 @@ import urllib.parse
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = pathlib.Path(os.environ.get("EXTC_DOCS") or HERE.parent)
+# 指向编译器仓库的相对链接（../extC_Compiler/...）按 EXTC_SRC 解析：本地是兄弟目录，
+# CI 里编译器 checkout 在文档工作区的子目录，两种布局都能通过闸门。
+SRC = pathlib.Path(os.environ.get("EXTC_SRC") or HERE.parent.parent / "extC_Compiler").resolve()
 LIVE_DIRS = ("guide", "reference", "design", "plans")
 ROOT_DOCS = ("README.md", "STYLE.md")
 
@@ -128,8 +131,15 @@ def check_file(p, issues):
             if not pathpart:
                 continue
             q = p.parent / pathpart
-            if not q.exists():
-                issues.append((rel, i, "dead-link", t))
+            if q.exists():
+                continue
+            # 编译器仓库链接：取 extC_Compiler/ 之后的路径，按 EXTC_SRC 再解析一次。
+            parts = pathlib.PurePosixPath(pathpart).parts
+            if "extC_Compiler" in parts:
+                k = parts.index("extC_Compiler")
+                if SRC.joinpath(*parts[k + 1:]).exists():
+                    continue
+            issues.append((rel, i, "dead-link", t))
 
 
 def main():
