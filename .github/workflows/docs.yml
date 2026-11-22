@@ -1,0 +1,58 @@
+# 文档项目 CI：把文档仓库和编译器仓库一起取出，用**当前编译器**跑文档闸门。
+#
+# 为什么不是只跑本仓库：文档里的 extC 示例要真的编过、跑过（tools/check_examples.py），
+# 没有编译器时它会按跳过协议输出"跳过"并 exit 0。CI 里"跳过"等于没验，所以这里显式
+# checkout 编译器、build 出来，并让任何"跳过"变成失败。
+#
+# 编译器默认取 main（文档要与正在开发的编译器同步）；workflow_dispatch 可以指定别的 ref。
+# 发布时两个仓库分别打 tag：文档仓库的 tag 应与它验证过的编译器 tag 对应。
+name: docs
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      compiler_ref:
+        description: extC compiler ref to validate the docs against
+        required: false
+        default: main
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: checkout docs
+        uses: actions/checkout@v4
+
+      - name: checkout compiler
+        uses: actions/checkout@v4
+        with:
+          repository: alphayangyang/extC
+          ref: ${{ github.event.inputs.compiler_ref || 'main' }}
+          path: extC_Compiler
+          fetch-depth: 1
+
+      - name: build compiler
+        run: make -C extC_Compiler -j"$(nproc)"
+
+      - name: compiler binary exists
+        run: test -x extC_Compiler/build/extc && extC_Compiler/build/extc --version
+
+      - name: docs gates (no skips allowed)
+        env:
+          EXTC_DOCS: ${{ github.workspace }}
+          EXTC_SRC: ${{ github.workspace }}/extC_Compiler
+          EXTC: ${{ github.workspace }}/extC_Compiler/build/extc
+        run: |
+          set -o pipefail
+          ./check.sh 2>&1 | tee /tmp/docs-check.log
+          if grep -q '跳过' /tmp/docs-check.log; then
+            echo "::error::文档闸门出现跳过：CI 必须真跑（检查 EXTC/EXTC_SRC 与编译器构建）"
+            exit 1
+          fi

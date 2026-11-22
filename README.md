@@ -95,6 +95,10 @@ extC 是一门编译到 C11 的系统语言：没有虚拟机、没有共享运�
 `EXTC` 指定别的二进制。编译器仓库还用自己的 `./check.sh docs` 核对三件事：驱动开关页与 `extc --help`
 一致、公开面清单与源码一致、语法糖手册与 `tests/sugar/` 双向点名。
 
+GitHub Actions 里由 `.github/workflows/docs.yml` 把编译器仓库 checkout 到子目录 `extC_Compiler/` 并
+`make -j`，再跑同一套 `./check.sh`；CI 中任何"跳过"都算失败。要在本地复现这个布局，把编译器克隆到
+`extC_Compiler/` 并设 `EXTC_SRC=$PWD/extC_Compiler`。
+
 ## 维护
 
 写作规范见 [STYLE.md](STYLE.md)。两条硬规矩：**引用符号不引行号**（行号必漂），**README 是本项目唯一索引**
