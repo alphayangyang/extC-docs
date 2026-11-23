@@ -132,7 +132,7 @@ fn main() {
 ## 五、边界与代价
 
 * **元素引用只对"存储不会搬家"的数组开放。** `ref a[i]` 今天可用：帧内定长数组、以及本帧 `new` 出来的视图（越界在取引用那一刻 trap，跨帧返回被拒）。容器视图的元素仍拒 —— 容器扩容会换板块，地址会失效。回收器的根表按槽发射，这些元素引用不参与根表。
-* **容器扩容会让旧视图分叉。** `varArray` 扩容会换一块缓冲区，之前拿到的视图还指着老的 ⇒ 往里写看不到。
+* **容器扩容会让旧视图分叉。** `vector` 扩容会换一块缓冲区，之前拿到的视图还指着老的 ⇒ 往里写看不到。
 * **大活集、纯环垃圾的形状上，回收是净开销。** 四个横评形状里，`chase`（六万多节点的大图）与 `cycleratio`（全是环）上回收档比把回收关掉更慢；垃圾多的 `promote`、`sizeratio` 上则又快又省内存。
 * **计数只在事件档打开**，这是编译期按 unit 定的：被证明无环的 unit 才走"最后一个持有者死了当场回收"；有环或拿不准的走清扫档，计数入口是空操作。
 * **线程还没做**：区域与根表的账都是按单线程算的。
@@ -179,6 +179,6 @@ python3 bench/gc/v2/report.py bench/gc/v2/matrix.tsv bench/gc/v2/REPORT.md bench
 ## 八、想再往下看
 
 * 机制、不变量与还没做的事：[回收机制与待做](../design/RECLAMATION.md)
-* 语言里的内存用法（region、提权、`varArray`/`pool`）：[语言现状](../reference/language.md)
+* 语言里的内存用法（region、提权、`vector`/`buf`）：[语言现状](../reference/language.md)
 * 完整成绩单：[REPORT.md](../../extC_Compiler/bench/gc/v2/REPORT.md) · 停顿分布（直方与分位）：[PAUSE.md](../../extC_Compiler/bench/gc/v2/PAUSE.md)
 * 每次改动的数字与理由：[开发历史](../devlog/changelog/README.md)

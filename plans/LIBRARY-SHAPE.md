@@ -113,7 +113,7 @@ std::text::number-> text / text -> number 各留一个入口（`parse` / `render
 
 | 概念 | 类型 | 为什么 |
 |---|---|---|
-| 连续序列 | `vec<T>`（= 现 `vector` + `varArray` 合一） | 一个就够了；`varArray` 与 `vector` 的差别只是"是否走池" |
+| 连续序列 | `vector<T>`（存储 `buf<T>`） | 已经是一个；`buf`/`block` 是存储层，不进入门手册 |
 | 映射 | `map<K, V>`（有序）+ `hashMapI64<V>`（整数键快速路径）| 两种实现，一个接口 |
 | 集合 | `set<T>` + `hashSetI64` | 同上 |
 | 多维视图 | `nd<T>`（= `nd` + `tensor` 合一） | 现在的 `tensor2` 是 `nd` 的 2 维特化 |
@@ -126,7 +126,7 @@ std::text::number-> text / text -> number 各留一个入口（`parse` / `render
 |---|---|---|
 | **P0 收口** | 214 个内部成员全部 `@private`（含 `p*`、`extc_*`、状态机、`snapshot` 的双名）；`manual_surface` 未覆盖率 0 | `check_manual --gate` 未覆盖 = 0；`surface.md` 只剩真实 API；`tests/run.sh` 377/0 |
 | **P1 拆炸弹** | `fs`/`io::fmt` 的模块级 `var` 改成 `Out`/`In` 对象与 `let` 表；`snapshot/view` → `view/snapshot` | 新增 `tests/io/concurrent-write.extc`（`par` 两分支 + 两协程同时 println，输出逐字节正确）；`bench/app` 与 `bench/crazy` 不低于现在 5% |
-| **P2 合并** | `std::text`/`std::data`/`std::nd` 落地；`varArray`+`vector` 合一；8 个格式化名字 → 3 个 | `bench/crazy` 的 extC 臂从 182 行降到 ≤120 行，耗时不降；`tests/` 全绿；`../reference/stdlib.md` 重写 |
+| **P2 合并** | `std::text`/`std::data`/`std::nd` 落地；容器只剩 `vector<T>`；8 个格式化名字 → 3 个 | `bench/crazy` 的 extC 臂从 182 行降到 ≤120 行，耗时不降；`tests/` 全绿；`../reference/stdlib.md` 重写 |
 | **P3 换根** | `stl::` → `std::` 别名过渡后删除；`prelude` 只留语言必需 | 全仓 `use` 迁移完；`check_manual`/`docs`/`nobench` 绿；外部两个示例工程能编 |
 
 ## 六、预期收益
@@ -144,49 +144,36 @@ std::text::number-> text / text -> number 各留一个入口（`parse` / `render
 
 
 
-### 容器为什么暂时**不**合并（2026-11-12 实测）
+### 容器面只剩一个 `vector<T>`
 
-试过把 `vector<T>`（`@poolObject`，自己的板块、可原地长、可 `release`）与 `varArray<T>`
-（region arena 的 `new T[cap]`）并成 `vec<T>`，撞上一个**能力差异**，不是代码风格问题：
+`varArray<T>` 已退役，容器统一为 `vector<T>`（存储是 `buf<T>` 的地址预留）。由此定下的口径：
 
-<!-- fragment -->
-```extc
-fn lend() -> slice<i32> {          /* varArray 版：编得过，而且安全 */
-    var a: varArray<i32> = varArray<i32>::withCap(2)
-    a.push(i32(7))
-    return a.view()                 /* 存储是 withCap 里 new 出来的，逃逸分析把它提到调用者那边 */
-}
+- 借出视图：`view()` 给只读视图、`viewMut()` 给可写视图；要跨函数把数据带走就用
+  `snapshot()`（独立拷贝）或 `vector::from(xs)`，不要带走指向本地容器的视图。
+- 元素引用（`ref v[i]`）只对「存储不会搬家」的数组开放：帧内定长数组与本帧 `new` 出来的视图；
+  容器元素引用的语言级工作见 `ELEMENT-REFS.md`。
+- 容器装拥有型元素（`vector<vector<T>>`、`buf<vector<T>>`）的 push/pop/移动可用；`buf::clone`
+  对这类元素仍在实例化期被拒（不允许拷出共享所有权）。完整的「容器元素所有权」仍欠账。
 
-fn lend2() -> slice<i32> {          /* 换成池版本（vec）后：编译错误 */
-    var a: vec<i32> = vec<i32>::withCap(2)
-    a.push(i32(7))
-    return a.view()                 /* 块住在 `a` 的池里，池随这个帧死 ⇒ 视图会悬垂 */
-}
-```
-
-即：**arena 底让"视图带出调用"成立，池底让它不成立**（后者只能 `snapshot()`，而且两级返回还会再撞
-深度规则）。合并要么放弃"视图带出"，要么放弃"原地长 + `release`"——两个都是用户能感知的能力。
-
-所以暂时保持两个名字，并把差异写清楚（`vec` = 有板块、能释放、视图不外借；`varArray` = arena 底、
-视图可以带出、但增长历史留在区域里）。真正的合一是语言级工作：元素引用或"冻结视图"
-（见 `ELEMENT-REFS.md`），让一个实现同时拿到两种寿命故事。
+**已知缺陷**：`fn lend() -> slice<i32> { var a: vector<i32> = vector<i32>::withCap(2); return a.view() }`
+能编过，而生成 C 在返回前跑 `buf::release`，返回的视图悬垂（`buf`、`string`、`vector` 同病）。
+修法是静态拒绝这种返回并提示改用 `snapshot()`，与「视图跨函数要过 `borrow()` 守卫」同一条路。
 
 ## 进度
 
-- **P0 完成**：`@private` 成为公开面的唯一凭据；公开面 834 → 515（公开 400 · 内部 115），
-  `manual_surface --worklist` 归零；容器的存储字段（`vals`/`depth`/`chunk`…）在手册里注明"公开但不是 API"。
+- **P0 完成**：`@private` 成为公开面的唯一凭据；公开面 820（公开 657 · 内部 163），
+  `manual_surface --worklist` 剩 21 项（map 17 · io 1 · string 3）；容器的存储字段（`vals`/`depth`/`chunk`…）在手册里注明"公开但不是 API"。
 - **P1 完成**：`toSlice()` → `snapshot()`（拷贝）、`asSlice()` → `view()`（借出），
-  `vector`/`pool` 补 `view()`；编译器的自动借出与容器 `for` 脱糖改认 `view`/`viewMut`
+  `vector` 补 `view()`；编译器的自动借出与容器 `for` 脱糖改认 `view`/`viewMut`
   （`asSlice`/`asMutSlice` 仍接受，用户自己写的容器两种拼写都认）；手册写明"程序级单例"不是隐藏炸弹（`par` 体内不允许调用）。
 - **P2 进行中**：`std::stl::*` 已拆成 `std::text::{string,stringio}`、`std::data::{vector,map,hashMap,
-  set,hashSet,linmap,linset,pool,sort,seq}`、`std::nd`（`nd` + `nd::tensor`）；14 个 `stl` 模块归零。
+  set,hashSet,linmap,linset,sort,seq}`、`std::nd`（`nd` + `nd::tensor`）；14 个 `stl` 模块归零。
   编译器糖里写死的模块路径（f-string → `std::text::string`、`stringio`，多下标 → `std::nd`）同步更新。
   模块级可变 `var` 已收进 `fs::OUT` / `fs::IN` / `io::fmt::FMTSTATE` 三个对象，
   并发写下不再有"隐式共享的可变状态"这类隐藏炸弹。
 - **P2 两项有意不做（带实测理由）**：
-  - `vector` + `varArray` 合一：两者差的是**能力**不是风格 —— arena 底的 `varArray` 允许
-    `return a.view()`（存储被逃逸分析提到调用者），池底的 `vector` 不允许（池随帧死）。
-    合并要么丢"视图带出"，要么丢"原地长 + `release`"。见上面「容器为什么暂时不合并」。
+  - 容器元素所有权：`vector<vector<T>>` 的 push/pop/移动可用，`buf::clone` 对拥有型元素仍在
+    实例化期被拒；逐元素移入 + 逐元素 `drop` 的完整规则还没做，见上面「容器面只剩一个 `vector<T>`」。
   - 格式化 8 个名字收成 3 个：目标形状 `format(tpl, args: any...)` 需要**变参**，而变参按
     用户决定往后推；没有它就只能写成 `format(tpl, slice<any>)`，仪式感反而更重。
     等变参落地再收。

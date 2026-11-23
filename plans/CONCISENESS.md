@@ -223,7 +223,7 @@ for line in io::lines() { ... }            // 逐行迭代，错误在迭代器�
 
 ### 第 1 层 B 的进展（字符串与 IO）
 
-- `std::text::string::split(s, sep)`：按字节分隔符切分，每段是零拷贝视图（`varArray<slice<u8>>`）。
+- `std::text::string::split(s, sep)`：按字节分隔符切分，每段是零拷贝视图（`vector<slice<u8>>`）。
   替掉"手写两层 while 找分隔符"约 8–12 行。
 - `io::print(s)` / `io::println(s)`：不用链式写法的一行输出，替掉 `io::cout << s << "\n"`。
 
@@ -256,7 +256,7 @@ for line in io::lines() { ... }            // 逐行迭代，错误在迭代器�
 本段又补：`io::eprint` / `io::eprintln`（诊断通道的一句版）、`string::fromF64(x, prec)`（定点浮点
 转字符串，复用 `io::pFmtF`；容器不认识"小数点后几位"，所以放 stringio 层）。
 
-还缺的（第 1 层 B 后续）：`varArray`→`slice` 之外的容器转视图（`vector` 的 `snapshot` 仍是显式）。
+还缺的（第 1 层 B 后续）：容器转视图的入口收敛到 `view()`/`viewMut()`；独立拷贝 `snapshot()` 仍是显式一条。
 
 ### 第 1 层 B 的进展（二）：把默认路径变短
 
@@ -274,7 +274,7 @@ for line in io::lines() { ... }            // 逐行迭代，错误在迭代器�
 - **`print` / `println` 恢复可用**：内建两条路都行（stdio vs `io::cout` 的 fd 流），生成的 C 在
   每次内建打印末尾补 `fflush(stdout)`，混写顺序与源码一致；`string` 实参按字节写出。
 
-已补：`varArray` / 定长数组传给**只读视图参数**时，调用位置自动借出（`total(va)` 就是
+已补：`vector` / 定长数组传给**只读视图参数**时，调用位置自动借出（`total(v)` 就是
 `total(va.view())`、`total(a)` 就是 `total(a[..])`），借用与生命周期照常检查；写权限
 （`mut slice<T>`）仍要写在调用点。
 

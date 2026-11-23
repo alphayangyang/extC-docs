@@ -39,7 +39,7 @@ prelude 是编译器在每个编译单元前先过一遍的一段 extC 源码。
 | `option<T>` | `\| none \| some(T)`；零值 = `none`；取值的路只有 `match` 与 `?` |
 | `result<T, E>` | `\| failure(E) \| success(T)`；零值 = `failure(E 的零值)` |
 | `slice<T>` | `{ data: ref T, len: i64 }`；`s[i]` 是语言语法，越界带位置 trap；`hasAt(i)` 只问边界、不取值 |
-| `varArray<T>` | 板块底的动态数组（见下；与 `buf<T>` 同一条路，但名字短、不用 `use`）|
+
 | `pcg32` | 显式状态的随机数引擎：`pcg32::seeded(42)` · `pcg32::withStream(seed, stream)` · `next()` · `nextBounded(bound)`（0 到 bound−1，用拒绝采样避开取模偏置）|
 | `nextFloat()` / `shuffle(a)` | 0.0–1.0 的浮点、i32 视图原地洗牌（都是生成器的方法：`r.nextFloat()`）|
 | `coroutine<A, B>` | 协程的**接口标记**（帧由编译器按协程函数合成，不要拿它当变量类型） |
@@ -63,43 +63,6 @@ prelude 是编译器在每个编译单元前先过一遍的一段 extC 源码。
 `.startsWith(s)` / `.endsWith(s)` / `.toI64()` / `.toF64()` / `.len()` / `.isEmpty()`；
 `string` 上同名方法走同一份实现。视图的 `data`/`len` 由编译器构造，**不能赋值**（`mut slice` 也不行）。
 
-### `varArray<T>`：地址预留底的动态数组
-
-| 方法 | 签名 |
-|---|---|
-| `withCap` | `fn withCap(cap: i64) -> varArray<T>` |
-| `size` / `isEmpty` | `fn size(self: ref varArray<T>) -> i64` / `-> bool` |
-| `push` / `pop` | `fn push(self: mut ref varArray<T>, v: T)` / `fn pop(...) -> ?T` |
-| `get` / `set` | `fn get(self: ref varArray<T>, i: i64) -> ?T` / `fn set(self: mut ref varArray<T>, i: i64, v: T)` |
-| `clear` | `fn clear(self: mut ref varArray<T>)` |
-| `release` | `fn release(self: mut ref varArray<T>)`（把预留当场还回竞技场）|
-| `view` / `asMutSlice` | `fn view(...) -> slice<T>` / `-> mut slice<T>` |
-| `==` | 按内容比较 |
-
-关键语义（都在 `stdlib/prelude.extc` 的注释里，逐条有位置）：
-
-- **谁拥有**：存储是容器自己的一段**地址预留**（`bufrt` 竞技场发给值本身），扩容换一段更大的预留、旧段当场还回竞技场 ⇒ 不靠作用域尾部归还。旧段留在竞技场里复用，所以峰值接近两倍终值（8e6 个 `i64`：`varArray` 130 MB；同样数据的 `buf<T>` 66 MB，见 `bench/containers/RESULTS.md`）。
-- **能不能装引用**：能装 `ref`/`slice` 字段；但**元素地址会因扩容而移动**，所以不要持有元素引用，
-  要写就用 `set(i, v)`。
-- **容量怎么涨**：满时翻倍（下限 4）。
-- **越界**：`get` 越界给 `none`（不 trap）；`set` 只在 `i` 超过 `cap` 时 trap，`i` 落在 `[len, cap)` 会写进未用槽。
-- **扩容会让视图失效**：`v.push(..)` 换掉板块，之前借出的 `slice`/`mut slice` 就作废 ——
-  同块内"增长之后还用旧视图"是编译错误，跨帧则借不出去（判据 `tests/stl/varArray_stale_view.extc`
-  与 `varArray_stale_write.extc`）。
-- **`clear()` 只把 `len` 置 0**，预留留着复用；要提前还就用 `release()`（之后任何下标都带位置 trap）。
-
-```extc
-use std::io
-fn main() -> i32 {
-    var v: varArray<i32> = varArray<i32>::withCap(2)
-    v.push(7)
-    v.push(8)
-    v.push(9)
-    io::cout << v.size() << " " << (v.get(0) ?? -1) << "\n"
-    return 0
-}
-```
-实测 `extc --run`：`3 7`。
 
 ## 2. `stl::*`：容器
 
@@ -124,24 +87,29 @@ fn main() -> i32 {
 这些容器的存储是它们**自己的**，不是帧里的一段：换缓冲时旧片当场归还，所以"反复建、反复丢"是
 稳态内存。三种存储（帧、缓冲区基质、对象表）各自适合什么、以及选错的代价，见[内存模型](../design/MEMORY-MODEL.md)。
 
-### `varArray` / `vector`：两个动态数组
+### `vector<T>`：动态数组
 
-| | `varArray<T>`（prelude） | `vector<T>`（`std::data::vector`） |
+`vector<T>`（`std::data::vector`）是通用动态数组，存储是内部持有的 `buf<T>`。
+
+| 项 | 语义 |
 |---|---|
-| 存储来源 | **自己的一段地址预留**（缓冲区基质的竞技场） | **自己的一片地址预留**（`buf<T>`，[BUF-INVARIANT](../design/BUF-INVARIANT.md)） |
-| 所有权 | `@noCopy`：`var b = a` 是转移，同时只有一个名字 | `@noCopy`：`var b = a` 是转移，同时只有一个名字 |
-| 寻址 | 下标 | 下标（`len` / `capacity` / `maxCapacity` / `get` / `set`） |
-| 容量怎么涨 | 翻倍（下限 4；换一段更大的预留，原来那段当场还） | **1.5 倍、原地长**（撞到预留上限才搬一次家，`relocations()` 数次数） |
-| 能不能装引用 | 能（ 点名） | 能：写元素时经运行期的**外部边表**登记（键 = 槽地址），结构动作按区间撤销 |
-| 取内容 | `view()` / `asMutSlice()` 借出视图 | `view()` 借出 `[0, len)` 的只读视图；要独立拷贝用 `snapshot()` |
-| 深拷贝 | 没有 `clone`；`==` 按内容比较 | `clone()` |
-| 收尾 | `release()`（整段预留还回竞技场，`@drop` 也走这里） | `shrink()`（尾部页还给系统）/ `release()`（整片预留还回竞技场，`@drop` 也走这里） |
-| 迭代顺序 | 插入序 | 插入序（dense 连续） |
+| 存储来源 | 一片地址预留（`buf<T>`，[BUF-INVARIANT](../design/BUF-INVARIANT.md)） |
+| 所有权 | `noCopy`：`var b = a` 是转移，同时只有一个名字 |
+| 容量怎么涨 | **1.5 倍、原地长**（撞到预留上限才搬一次家，`relocations()` 数次数） |
+| 能不能装引用 | 能：写元素时经运行期的**外部边表**登记（键 = 槽地址），结构动作按区间撤销 |
+| 取内容 | `view()` 借出 `[0, len)` 的只读视图、`viewMut()` 借出可写视图；要独立拷贝用 `snapshot()` |
+| 深拷贝 | `clone()`；按内容比较写 `v.view() == w.view()`（容器是 `noCopy`，`v == w` 会移动两侧） |
+| 收尾 | `shrink()`（尾部页还给系统）/ `release()`（整片预留还回，`drop` 也走这里） |
+| 迭代顺序 | 插入序（dense 连续） |
 
 `vector` 的方法：`withCap` · `new` · `len` · `capacity` · `maxCapacity` · `relocations` ·
-`isEmpty` · `get`（给 `option<T>`） · `set`（越界返回 `false`，不 trap） · `view`（只读视图） ·
-`snapshot`（拷贝） · `clone`（深拷贝） · `push` · `pop` · `shrink` · `clear` · `release` ·
-`borrow`。`vector::from(xs)` 从一段视图拷出一个容器。
+`isEmpty` · `get`（给 `option<T>`） · `set`（越界返回 `false`，不 trap） · `[]` / `[]=`（越界 trap） ·
+`push` · `insert(i, v)` · `removeAt(i)` · `truncate(k)` · `pop` · `reserve(more)` ·
+`view`（只读视图） · `viewMut`（可写视图） · `snapshot`（拷贝） · `clone`（深拷贝） · `shrink` ·
+`clear` · `release` · `borrow`。`vector::from(xs)` 从一段视图拷出一个容器。
+
+结构动作的越界口径：`insert` 合法范围是 `[0, len]`，越界给 `false`；`removeAt` 越界给 `none`，
+否则返回被移出的元素；`truncate(k)` 把长度收到 `k`（被丢的元素跑 `drop`，容量不动）。
 
 所有权是**转移**语义：`var b = a` 之后 `a` 不能再读（编译错），要两份独立存储写
 `var b = a.clone()`。`tests/stl/clone.extc` ④ 就是这一条。
@@ -275,7 +243,7 @@ let w: mut slice<u8> = v2.viewMut()
 
 ### 自己写一个容器：持有 `buf<T>` 或 `dense::block<T>`
 
-`vector`、`string`、`hashMap` / `hashSet`、`map` / `set`、`linMap` / `linSet`、`varArray` 的存储都在缓冲区基质上（各自的类型化块或地址预留，见 [BUF-INVARIANT](../design/BUF-INVARIANT.md) 与 [HASHMAP](../design/HASHMAP.md)）。要写一个新的可增长容器，持有 `buf<T>`：预留内 0 拷贝增长、撞上限搬一次家、结构动作按区间撤边；平坦列式结构用 `dense::block<T>`：容量固定、整块归还、`growTo` 搬家不拷贝。存储跟着值走（`@noCopy` + `@drop`），不依赖作用域尾部的任何登记。
+`vector`、`string`、`hashMap` / `hashSet`、`map` / `set`、`linMap` / `linSet` 的存储都在缓冲区基质上（各自的类型化块或地址预留，见 [BUF-INVARIANT](../design/BUF-INVARIANT.md) 与 [HASHMAP](../design/HASHMAP.md)）。要写一个新的可增长容器，持有 `buf<T>`：预留内 0 拷贝增长、撞上限搬一次家、结构动作按区间撤边；平坦列式结构用 `dense::block<T>`：容量固定、整块归还、`growTo` 搬家不拷贝。存储跟着值走（`noCopy` + `drop`），不依赖作用域尾部的任何登记。
 
 ### `string` + `stringio`：连续字节串与流式读写
 
@@ -302,7 +270,7 @@ let w: mut slice<u8> = v2.viewMut()
 | 查找 | `find(needle) -> ?i64`（无匹配 `none`）、`contains`、`startsWith`、`endsWith`、`hash()` |
 | 容量 | `grow()`（1.5 倍）、`shrink()`、`clear()`、`release()`、`removeFront(n)` |
 | 解析 | `string::toI64(b) -> ?i64`；`string::toF64(b) -> ?f64`（整数/小数/指数写法，至少一位数字；不接受 `.5`、`inf`、`nan`、十六进制） |
-| 切分 | `string::split(s: slice<u8>, sep: slice<u8>) -> varArray<slice<u8>>`（每段是 `s` 的零拷贝视图；空 `sep` 返回空数组；末尾空段也入列 ⇒ 段数 = 出现次数 + 1）|
+| 切分 | `string::split(s: slice<u8>, sep: slice<u8>) -> vector<slice<u8>>`（每段是 `s` 的零拷贝视图；空 `sep` 返回空数组；末尾空段也入列 ⇒ 段数 = 出现次数 + 1；先 `use std::data::vector`）|
 | 拼接 | `string::join(parts: slice<slice<u8>>, sep: slice<u8>) -> string`（空数组给空串；`sep` 可以是空视图；一次按总长分配）|
 | 裁剪 | `string::trim(s)` / `trimStart(s)` / `trimEnd(s)`：去掉两端 ASCII 空白（空格、`\t`、`\n`、`\r`、`\v`、`\f`），返回**原缓冲视图**（零拷贝）|
 | 比两段字节 | `bytesEq(a, b)` / `bytesLt(a, b)`（模块级关联函数，直接比两段 `slice<u8>`）|

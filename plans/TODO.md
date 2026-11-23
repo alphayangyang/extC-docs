@@ -41,7 +41,7 @@
 ## 语言设计：还没定
 
 - **大对象的值 / 句柄语义**（搁置中）：`string` 要不要改成不可变值语义加显式 `StringBuilder`；
-  可变容器（`varArray` / `hashMap`）要不要"共享必须显式"（`.clone()` / `.share()`）。
+  可变容器（`vector` / `hashMap`）要不要"共享必须显式"（`.clone()` / `.share()`）。
   这是当前**唯一**没定的设计母题。
 - **免写 `std` 前缀**（搁置中）：要的行为是"标准库模块的限定名不用 `use` 也能写"
   （`io::cout`、`json::json`、`net::conn` 这类），只对 `std` 命名空间生效、`std::sys` 不参与，

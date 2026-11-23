@@ -18,7 +18,7 @@
 |---|---|
 | 入口 | `fn main() -> i32 { ... }` 或 `fn main() { ... }`（无返回类型 = `void`，退出码 0） |
 | 导入 | `use a::b` · `use a::b::*` · `use a::b::{x, y}` · `use a::b as c` |
-| 预置 | `option` / `result` / `slice` / `varArray` / `unit` / `pcg32` / `coroutine` / `domain` 无需导入（prelude 里就有） |
+| 预置 | `option` / `result` / `slice` / `unit` / `pcg32` / `coroutine` / `domain` 无需导入（prelude 里就有）；容器 `vector<T>` / `buf<T>` 是模块类型，先 `use std::data::vector` / `use std::data::buf` |
 | 控制台 | 写：`println(x)` 内建，或 `use std::io` 后 `io::cout << x << "\n"`；读：默认"读一行再解析"——`use std::text::string` 的 `string::readLine()` + `string::toI64`/`toF64`（`io::cin >> x` 是 token 快路，见 「输入：默认"读一行再解析"」） |
 | 语句 | 不需要分号；写了分号会被忽略。换行只是**空白**，表达式在下一个记号接不下去时结束 |
 | 续行 | 接不下去的记号**不能**起新行：`io::cout << a` 后换行再写 `<< b` 是错的（`<<` 不能续行）|
@@ -332,6 +332,7 @@ fn apply<F>(f: F, v: i64) -> i64 { return f.call(v) }
 ```extc
 // 结果：6 7 85
 use std::io
+use std::data::vector
 
 trait IntFn { fn call(self: ref Self, a: i64) -> i64 }
 
@@ -340,14 +341,14 @@ fn main() -> i32 {
     var d: dyn IntFn = dyn IntFn(fn(x: i64) -> i64 { return x + bias })
 
     var k: i64 = 2
-    var fns: varArray<dyn IntFn> = varArray<dyn IntFn>::withCap(4)
+    var fns: vector<dyn IntFn> = vector<dyn IntFn>::withCap(4)
     fns.push(dyn IntFn(fn(x: i64) -> i64 { return x + k }))
     fns.push(dyn IntFn(fn(x: i64) -> i64 { return x * 10 }))
     fns.push(dyn IntFn(fn(x: i64) -> i64 { return x - 1 }))
 
     var sum: i64 = 0
     var i: i64 = 0
-    while i < i64(fns.size()) {
+    while i < fns.len() {
         sum = sum + (fns.get(i)!).call(7)
         i = i + 1
     }
@@ -447,7 +448,7 @@ this `any` holds a `i64`, not a `string$string`
 
 - 表示是 **16 字节**（与 `slice` 同宽）：一个描述符 + 内容。8 字节以内且无引用的值直接内联，其余
   在创建它的 arena 里拷一份，所以 `any` 从不指向将死的临时量。
-- `any` 能进 `varArray`、能作为字段、能被返回；`option<any>` 用来表示"可能没有"。
+- `any` 能进 `vector<T>`、能作为字段、能被返回；`option<any>` 用来表示"可能没有"。
 ### 3.8 `any` 上的动态方法调用
 
 `any` 上可以直接写方法调用：哪一个实现跑，由值**运行期持有的类型**决定。
@@ -620,7 +621,7 @@ impl slice<u8> {
 
 - `dyn Trait(值)` 把一个实现了该协议的值变成 `dyn Trait`；载荷类型必须实现了该协议。
 - 调用点只知道 `dyn Trait`，方法经**表**派发；`dyn Trait` 是普通值，能存字段、进数组、
-  进 `varArray<T>`、被函数返回（返回时提升进调用者的地方）。
+  进 `vector<T>`、被函数返回（返回时提升进调用者的地方）。
 - **`dyn` 的值是某个 place 里槽位的句柄**，所以它和引用一样算"携带存储"：把一个在循环体/内层块
   里造出来的 `dyn` 直接交给活得更久的容器（`xs.push(dyn Tag(b))`）在**检查期就被拒绝**。
   两条出路：先赋给一个在这层之外声明的 `dyn` 变量再交出去（赋值会把池提升到那层），
@@ -780,17 +781,17 @@ fn main() {
 - **字面量切片的深度是 0**：`let k: slice<u8> = "…"` 的存储是静态存储期（与全局同寿），
   所以绑成 `let` 之后可以跨 `yield` / `ext` 使用；局部数组的视图跨 `yield` 仍然被拒
   （那才是"指向别人栈帧"）。
-- **容器在视图参数上自动借出**：只读参数上 `total(va)`（`varArray<T>`）等价于
-  `total(va.view())`、`total(a)`（`[N]T`）等价于 `total(a[..])`；可写参数
-  （`mut slice<T>`）上 `fill(va)` 等价于 `fill(va.asMutSlice())`、`fill(a)` 等价于
+- **容器在视图参数上自动借出**：只读参数上 `total(v)`（`v: vector<T>`）等价于
+  `total(v.view())`、`total(a)`（`[N]T`）等价于 `total(a[..])`；可写参数
+  （`mut slice<T>`）上 `fill(v)` 等价于 `fill(v.viewMut())`、`fill(a)` 等价于
   `fill(a[..])`，后者要求容器本身是可写的地方（`var` 绑定），借用检查照常把关。
   方法实参同理（`s.append(bytes)` 的 `bytes`）；**表达式位置也借**（`println(f"…")`、
-  `take(f"seven")` 这类右值直接过）。编译器在调用位置造的就是这些节点，借用与生命周期检查照常生效。元素类型对不上时（`varArray<i32>` 传给 `slice<i64>`）不借，
+  `take(f"seven")` 这类右值直接过）。编译器在调用位置造的就是这些节点，借用与生命周期检查照常生效。元素类型对不上时（`vector<i32>` 传给 `slice<i64>`）不借，
   诊断指出该写什么。
 - **借出不是内建名单**：任何类型只要方法 `view() -> slice<T>`（只读）或
-  `asMutSlice() -> mut slice<T>`（可写）的**返回类型**对得上，就能出现在这类参数上 ——
-  判据是签名，不是容器是哪个内建类型。`varArray` 与定长数组只是内建的两个现成做法。
-  只有 `view` 的类型不会被借成可写视图（可写参数仍要求 `asMutSlice`）。
+  `viewMut() -> mut slice<T>`（可写）的**返回类型**对得上，就能出现在这类参数上 ——
+  判据是签名，不是容器是哪个内建类型。`vector` 与定长数组只是现成的两个做法。
+  只有 `view` 的类型不会被借成可写视图（可写参数仍要求 `viewMut`）。
 
 ```extc
 // 结果：3 10 80 1059 / hello world 0
@@ -995,28 +996,31 @@ fn main() -> i32 {
 `@overwrite var n = new T`：让每轮循环**复用同一块存储**（活到本帧，不是块），
 初始式必须恰好是 `new`，且绑定必须是 `var`。
 
-### 8.2 三个动态数组：`varArray<T>`、`vector<T>`、`buf<T>`
+### 8.2 两个动态数组：`vector<T>`、`buf<T>`
 
-| | `varArray<T>`（prelude 里） | `vector<T>`（`std::data::vector`） | `buf<T>`（`std::data::buf`） |
-|---|---|---|---|
-| 存储 | 一段地址预留；满了换一段更大的（2 倍），原来那段当场还回竞技场 | 内部持有一个 `buf<T>`：预留内只推长度，撞到预留上限才搬一次家 | 自己的一片地址预留 |
-| 取 / 写 | `v.get(i) -> ?T`、`v.set(i, v)`（按值拷） | `v.get(i)` / `v.set(i, v)`、`len` / `capacity` | 只有长度；`push` / `pop` / 下标由调用者负责 |
-| 可寻址性 | `v[i]` **不行**（`cannot index a value of type 'varArray<i32>'`）；要借出视图：`v.view()` / `v.asMutSlice()` → `slice<T>` | 同左：`view()` / `snapshot()` | `view()` / `asMutSlice()` |
-| 装引用 / 视图 | 可以：`varArray<slice<u8>>`、`varArray<ref i32>` 都编过（存的时候按寿命检查） | 可以 | 可以 |
-| 回收 | 扩容当场把上一段还给竞技场，`release()` 也能提前还；`clear()` 只把 `len` 归零、存储留着复用 | `@drop` 交还（经 `buf`）；`shrink(k)` 把 `[k, cap)` 的页还给操作系统（地址不变） | `@drop` 交还，`release()` 是公开入口 |
+| | `vector<T>`（`std::data::vector`） | `buf<T>`（`std::data::buf`） |
+|---|---|---|
+| 存储 | 内部持有一个 `buf<T>`：预留内只推长度，撞到预留上限才搬一次家 | 自己的一片地址预留 |
+| 取 / 写 | `v.get(i) -> ?T`、`v.set(i, v)`、`len()` / `capacity()` | 只有长度；`push` / `pop` / 下标由调用者负责 |
+| 结构动作 | `insert(i, v)` / `removeAt(i)` / `truncate(k)` / `push` / `pop` | `insertAt` / `removeAt` / `truncate` / `push` / `pop` |
+| 可寻址性 | `v[i]` 读写（越界 trap）；借出视图：`v.view()` / `v.viewMut()` → `slice<T>` | 同左：`view()` / `viewMut()` |
+| 装引用 / 视图 | 可以：`vector<slice<u8>>`、`vector<ref i32>` 都编过（存的时候按寿命检查） | 可以 |
+| 拷贝 | `noCopy`：`var b = a` 是转移；要独立副本写 `clone()` / `snapshot()` | `noCopy`，同上 |
+| 回收 | `drop` 交还（经 `buf`）；`shrink(k)` 把 `[k, cap)` 的页还给操作系统（地址不变） | `drop` 交还，`release()` 是公开入口 |
 
-扩容的规矩要记住：`push` 换掉存储之后，**之前借出的视图就作废了** —— 旧段已经还给竞技场，
+扩容的规矩要记住：`push` 换掉存储之后，**之前借出的视图就作废了** —— 旧段已经归还，
 所以"增长之后还用旧视图"在同块内是编译错误（`v` changes the storage that `s` views`），
 跨帧则根本借不出去。用完再增长，或者增长之后重新取视图：
 
 ```extc
-// 结果：99 2 —— 先借、先写，再增长；增长之后重新借
+// 结果：99 2 —— 先借、先写，再增长
 use std::io
+use std::data::vector
 fn main() -> i32 {
-    var v: varArray<i32> = varArray<i32>::withCap(2)
+    var v: vector<i32> = vector<i32>::withCap(2)
     v.push(1)
     v.push(2)
-    var s: mut slice<i32> = v.asMutSlice()
+    var s: mut slice<i32> = v.viewMut()
     s[0] = 99
     var first: i64 = i64(s[0])            /* 视图用完这里之后不再出现 */
     v.push(3)                             /* 增长：`s` 已经不在了 */
@@ -1056,15 +1060,16 @@ while i < 1000 {
 ```extc
 // 结果：a=1000 b=1000
 use std::io
+use std::data::vector
 use std::data::buf
 fn main() -> i32 {
-    var a: varArray<i64> = varArray<i64>::withCap(4)
+    var a: vector<i64> = vector<i64>::withCap(4)
     var i: i64 = 0
     while i < 1000 { a.push(i)  i = i + 1 }
     var b: buf<i64> = buf<i64>::withCap(4)
     i = 0
     while i < 1000 { b.push(i)  i = i + 1 }
-    io::cout << "a=" << a.size() << " b=" << b.len() << "\n"
+    io::cout << "a=" << a.len() << " b=" << b.len() << "\n"
     return 0
 }
 ```
@@ -1299,9 +1304,9 @@ parser 把 `for` 脱糖成 `var` + `while`，共有三种脱糖形状；
 容器形状覆盖：定长数组、`slice<T>`（含字符串字面量）、协程帧，
 以及任何声明了 `iter` / `next` / `value` 三个方法的用户类型
 （`fn iter(self: ref Self) -> It`、`fn next(self: mut ref It) -> bool`、`fn value(self: ref It) -> T`）。
-`varArray` / `string` 这类**有 `view()` 的容器会被自动借出**：`for d in va` 等价于
-`for d in va.view()`，不用手写 `.view()`。`vector<T>` 故意不提供零拷贝视图（`snapshot` 拷贝），
-迭它要显式写 `for d in v.snapshot()`。
+`vector` / `string` 这类**有 `view()` 的容器会被自动借出**：`for d in v` 等价于
+`for d in v.view()`，不用手写 `.view()`。元素本身不可拷贝（例如元素是 `vector<T>`）时，
+按值读元素会被拒 —— 改用下标或链式视图读。
 
 ```extc
 // 结果：10 60 12 60
@@ -1619,7 +1624,7 @@ error: `scale` expects at most 3 argument(s), got 4
 | `a == b`（带载荷枚举） | `` `shape` is an enum with a payload, so it has no `==` ``（要比就 `match` 或自己写 `fn ==`） |
 | `let f: fn(i64) -> i64`（无初始化式） | `cannot zero-initialize 'f': it contains a fn`（`fn` 没有零值） |
 | `i8(300)` | 编译通过；运行时 trap `value does not fit in the target type` |
-| `var v: varArray<T>` 上 `v[i]` | `cannot index a value of type 'varArray<i32>'`（用 `get`/`set`/`view`） |
+| `var b: buf<T>` 上 `b[i]` | `` cannot index a value of type `buf::buf<i32>` ``（先 `b.view()`，再在视图上下标） |
 | 嵌套超过 64 层块 | `nesting too deep in a block (the compiler's limit is 64 levels)` |
 | 表达式树超过 2048 层（`a + a + …` 的长链，或机器生成的表达式） | `expression too deep to check (the compiler's limit is 2048 levels)` |
 

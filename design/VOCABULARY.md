@@ -1,6 +1,7 @@
 # 名词账：数组、视图、容器
 
-> 状态：**研究稿** —— 盘点现状、给出候选目标词汇与迁移面；尚未改动任何代码。
+> 状态：**研究稿** —— 盘点现状、给出候选目标词汇与迁移面。已落地一步：`varArray` 并入 `vector`、
+> 诊断改教 `v.view()`；类型名 `slice`→`view` 的改名本身尚未动手。
 > 落地按 「迁移面与落地顺序」 的顺序逐步进行，每一步单独验收。最后核对 2026-11-23。
 
 ## 0. 目标与验收
@@ -28,10 +29,10 @@
 |---|---|---|
 | 借来的连续存储 | 类型 `slice<T>`；手册章节标题写「视图」；错误文案写 view | `stdlib/prelude.extc:struct slice`、手册「视图 `slice<T>`」 |
 | 可写权限 | 外层 `mut slice<T>`、元素层 `slice<mut T>` | `src/types/types.c:ttViewDowngradable` |
-| 取只读视图 | `a[lo..hi]`、`.view()` | `.view()` 138 处 / 72 个 .extc |
-| 取可写视图 | `a[lo..hi]`、`.viewMut()`、`.asMutSlice()` | viewMut 32 处 / 15 个文件；asMutSlice 13 处 / 7 个文件（只有 varArray） |
+| 取只读视图 | `a[lo..hi]`、`.view()` | `.view()` 147 处 / 74 个 .extc |
+| 取可写视图 | `a[lo..hi]`、`.viewMut()`、`.asMutSlice()` | viewMut 33 处 / 19 个文件；asMutSlice 4 处（旧拼写仍被接受） |
 | 已失效的别名 | `.asSlice()` | 实现 0 处；活文档 0 处；changelog 与 archive 93 处 |
-| 拥有型变长数组 | `vector<T>`、`varArray<T>` | 59 / 80 个 .extc |
+| 拥有型变长数组 | `vector<T>` | 128 个 .extc |
 | 底层存储 | `buf<T>`、`block<T>`、`ndarray<T>`、`ndview<T>` | `stdlib/std/data/`、`stdlib/std/nd.extc` |
 | 内联定长 | `[N]T` | 语言级 |
 | 帧/块分配 | `new T[n]` → `slice<T>` | 语言级 |
@@ -46,10 +47,10 @@
 ### 2.2 借出协议靠方法名
 
 任何类型只要返回类型对得上（`view() -> slice<T>`、可写参数要 
-`viewMut() -> mut slice<T>` 或 `asMutSlice() -> mut slice<T>`）就能被自动借出，
-[手册](../reference/language.md)的「视图 `slice<T>`」明说「借出不是内建名单」。提供 `view()` 的类型有 10 个：
-`buf`、`block`、`vector`、`string`、`varArray`、`ndarray`、`plate`、
-`borrowGuard`、`vectorGuard`、`stringGuard`。其中 9 个返回 `slice<T>`，
+`viewMut() -> mut slice<T>`，旧拼写 `asMutSlice() -> mut slice<T>` 也认）就能被自动借出，
+[手册](../reference/language.md)的「视图 `slice<T>`」明说「借出不是内建名单」。提供 `view()` 的类型有 9 个：
+`buf`、`block`、`vector`、`string`、`ndarray`、`plate`、
+`borrowGuard`、`vectorGuard`、`stringGuard`。其中 8 个返回 `slice<T>`，
 `ndarray.view()` 返回 `ndview<T>` —— 同名动作两个结果类型（T7）。
 注意 `block.view(from, to)` 与 `plate.view(off, n)` 带参数：同名不同参数在不同类型上是合法的，
 **同一类型上不允许重载**（实测 `duplicate method `get``），这条限制决定了 「目标词汇：三个候选」 的方案形状。
@@ -81,13 +82,13 @@
 | # | 现象 | 证据（实测/源码） |
 |---|---|---|
 | T1 | 手册教写 `asMutSlice()`，实现偏好 `viewMut()` | 手册「视图 `slice<T>`」五处（`fill(va)` 等价于 `fill(va.asMutSlice())`）；`feeldLendName` 先找 view/viewMut，找不到才试 asSlice/asMutSlice |
-| T2 | 诊断教人写 `v.asSlice()`，而这个方法不存在 | `var s: slice<i64> = v` 的 note 原文 `lend a read-only view explicitly: `v.asSlice()``；照写报 `no method asSlice on varArray<i64>` |
+| T2 | 诊断让人写死名字，而同位置的自动借出是另一套策略 | `var s: slice<i64> = v` 的 note 原文是 `lend a read-only view explicitly: v.view()`（与实现一致）；同形状的 `sum(v)` 却直接借出（见 T3） |
 | T3 | 同一动作两套隐式策略 | `sum(v)` 行，`var s: slice<i64> = v` 不行（后者 note 让人写死名字） |
 | T4 | 死名字还留在检查器里 | `asSlice` 在 .extc 出现 0 次，却仍被 `feeldLendName` 当合法拼写 |
 | T5 | 概念两个词 | 手册「视图 `slice<T>`」一节，正文与类型都写 slice；活文档 `slice` 1094 处、`视图` 57 处 |
 | T6 | `mut` 两个位置 | 外层 `mut slice<T>` 695 处；元素层 `slice<mut T>` |
 | T7 | `ndview<T>` 是另一套 view | 字段是 `data: mut slice<T>` + off/rank/shape/strides；`ndarray.view()` 返回它 |
-| T8 | 两套等价的可变长容器 | `vector<T>` 59 个文件、`varArray<T>` 80 个文件，方法集重叠（push/pop/get/set/clear/view/snapshot…） |
+| T8 | 容器与存储层名字重叠 | `vector<T>` 是容器、`buf<T>` 是它底下的存储，两个都在手册里当「能 push/pop/view 的东西」讲（128 / 40 个 .extc） |
 | T9 | 字符串子段三套写法 | `s.sub(lo,hi)` 拷贝、`s.subView(lo,hi)` 借用、`s.view()[lo..hi]` 也借用（实测输出 `el`） |
 | T10 | `subView` 注释与检查器行为不符 | 注释称检查器看不见，实测 `var v = s.view(); s.append(...)` 被拒 |
 | T11 | 视图可手工构造 | `var s: slice<i64> = { data: ref a[0], len: i64(2) }` 编译通过 |
@@ -109,7 +110,7 @@ T1–T5 是一件事：**同一个动作有多个名字**。T6–T13 是另一�
 | 取可写 | `[..]` / `viewMut()` / `asMutSlice()` | `[..]` / `viewMut()` |
 | 自动借出 | 只在实参、方法实参 | 所有期望视图的位置 |
 | 字符串子段 | `sub` / `subView` / `view()[..]` | `view()[lo..hi]`（借）、`string::from(s.view()[lo..hi])`（拷） |
-| 拥有型变长 | `vector` / `varArray` | `vector` |
+| 拥有型变长 | `vector`（`buf` 当容器也在手册里） | `vector` |
 | 底层存储 | `buf` / `block` / `ndarray` / `ndview` | 名字不变；从手册入门退出，只进 design 文档 |
 
 规则数从 7 降到 3：
@@ -134,7 +135,7 @@ T1–T5 是一件事：**同一个动作有多个名字**。T6–T13 是另一�
 
 | 改动点 | 位置 | 规模 |
 |---|---|---|
-| `.extc` 拼写 | 538 个文件 `slice<` 2235 处 + 214 个文件 `mut slice<` 695 处 | 机械替换 |
+| `.extc` 拼写 | 539 个文件 `slice<` 2229 处 + 215 个文件 `mut slice<` 690 处 | 机械替换 |
 | 生成 C | `slice<` 617 处（都在测试与 bench 的产物里） | 由 `emitted_identity` 重新冻结 |
 | 活文档 | `slice<` 1094 处 / 98 文件、`asMutSlice` 34 处 | 机械替换 + 5 处句子重写 |
 | 编译器 | 6 处 `\"slice\"` 字面量 + 视图相关诊断文案 | 少量 |
@@ -146,10 +147,10 @@ T1–T5 是一件事：**同一个动作有多个名字**。T6–T13 是另一�
 | 步骤 | 内容 | 判据 |
 |---|---|---|
 | S1 文案与规则 | 修 T1/T2/T10/T12；手册统一到一个说法（视图 = 借来的连续存储） | `./check.sh docs` 全绿，`tests/errors` 期望串不变 |
-| S2 入口收敛 | 删 `asSlice`/`asMutSlice` 识别；`varArray.asMutSlice` 改 `viewMut`；新增门禁 `tools/check_vocab.py`（禁死名字出现在 src、stdlib、活文档） | 新门禁 + 全量构建 |
+| S2 入口收敛 | 删 `asSlice`/`asMutSlice` 识别（现存 `.asMutSlice()` 4 处改 `viewMut()`）；新增门禁 `tools/check_vocab.py`（禁死名字出现在 src、stdlib、活文档） | 新门禁 + 全量构建 |
 | S3 自动借出统一 | `lendViewArg` 提到「期望视图类型」的判定，覆盖初始化、return、赋值、结构体字段；补 `tests` 用例 | 新增用例全绿，既有 `tests/run.sh` 377/0 |
 | S4 改名 `slice`→`view` | 机械替换 + 6 处字面量 + 诊断文案；重冻结 `emitted_identity` | 全门禁：`tests/run.sh`、`check.sh nobench`、`docs`、`reclaim*`、`gc-p0`、`gc-torture` |
-| S5 容器收敛 | `varArray` 退役（80 个文件迁移）、`buf`/`block` 退出入门手册、删 `sub`/`subView` | 容器四方 bench 判据不劣化，`nobench`/`docs` 全绿 |
+| S5 容器收敛 | `varArray` 退役已完成（容器只剩 `vector<T>`）；剩下 `buf`/`block` 退出入门手册、删 `sub`/`subView` | 容器 bench 判据不劣化，`nobench`/`docs` 全绿 |
 
 ## 7. 待拍板
 
@@ -158,7 +159,7 @@ T1–T5 是一件事：**同一个动作有多个名字**。T6–T13 是另一�
 | Q1 | 类型名用 `view<T>` 还是留 `slice<T>` | `view<T>`：让「视图」这个概念只有一个词；rename 是 6 处字面量 + 机械替换 |
 | Q2 | 入口是否只留 `view()`/`viewMut()`，删 `asSlice`/`asMutSlice` | 删；用户自己写的容器不再认别名 |
 | Q3 | 自动借出统一到所有期望视图的位置 | 统一（规则 3 的「没有位置例外」） |
-| Q4 | `varArray` 退役、`vector` 唯一 | 退役；80 个文件同批迁移 |
+| Q4 | `buf<T>` 是否也退出「可直接用的容器」名单 | 暂留：它是 `vector` 的存储层，基准也直接用它；等元素引用落地再收 |
 | Q5 | `buf`/`block` 是否退出入门手册 | 退出：它们是存储基质的实现细节，进 design 文档即可 |
 | Q6 | 与 `ARRAY.md` 的多维计划对齐 | rank-1 就叫 `view<T>`，将来二维叫 `view2<T>` |
 
@@ -168,7 +169,7 @@ T1–T5 是一件事：**同一个动作有多个名字**。T6–T13 是另一�
 
 | 范围 | `slice<` | `mut slice<` | `asMutSlice` | `asSlice` | `.view()` | `viewMut` |
 |---|---|---|---|---|---|---|
-| `.extc` | 2235 / 538 文件 | 695 / 214 | 13 / 7 | 0 | 138 / 72 | 32 / 15 |
+| `.extc`（2026-11-23 实测） | 2229 / 539 文件 | 690 / 215 | 4 | 0 | 147 / 74 | 33 / 19 |
 | `.c .h .inc` | 617 / 224 | 64 / 18 | 44 / 12 | 24 / 4 | 15 / 4 | 228 / 42 |
 | `.md` | 1094 / 98 | 291 / 60 | 34 / 11 | 93 / 23 | 53 / 14 | 30 / 10 |
 

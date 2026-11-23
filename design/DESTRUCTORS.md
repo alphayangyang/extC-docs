@@ -116,7 +116,7 @@ name" / "not tracked here" — the recoverable side (see the status line).
 | `@drop` on a type that is neither `@noCopy` nor `@value` | dropping needs an owner per copy | `@drop` needs a `@noCopy` or `@value` struct |
 | `drop x` while `x` is borrowed | dangling | at the statement |
 | `drop` of a field outside a destructor | partial move out of a value | at the statement |
-| a `@drop` value inside `varArray`/`dyn`/`any` | those copy/clone values | at the container's element check |
+| a `@drop` value inside `vector`/`dyn`/`any` | those copy/clone values | at the container's element check |
 | a `@drop` value captured by a closure | closures copy the environment | capture check |
 | a `@drop` value held across `yield` | frame drop list not implemented yet (stage 3) | at the coroutine's frame layout |
 | a `@drop` value passed as `par` capture | parallel copies | the `par` capture check |

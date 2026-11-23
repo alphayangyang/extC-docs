@@ -168,12 +168,11 @@ heap-use-after-free。同一块里的这种写法现在是编译错误；跨函�
 （`tests/pin/string_frozen.extc`）。`bench/app` 的日志场景（20M 次追加）测不出差异。
 | 3. `std::mem::arena` | pure extC over `zone::alloc` | `tests/stl/arena_*`; peak = live + one chunk |
 | 4. `std::mem::pool<T>` | free list + generations over zone chunks; handle API (`slotOf/at/setAt/entry`) already exists in `stdMap` land | `tests/pool/*` ported to the library type; `bench/app`/`realsvc` within noise |
-| 5. containers | `varArray` → segmented chunks on `zone::alloc` (peak from 129 MB to ≈70 MB for 8M i64, per prototype); `vector` → zone-backed pool with growth policy; `string` keeps SSO | `tests/run.sh` 377/0; `bench/crazy`, `bench/app`, `bench/realsvc` within noise; 8M-i64 peak recorded in the paper's table |
+| 5. containers | 容器今天长在 `buf<T>`/`block<T>`（地址预留 + 分块；8e6 个 `i64` 峰值 64 MB）；改用库内 `zone::alloc` 之上的分段增长是这一步的目标；`string` 保 SSO | `tests/run.sh` 377/0; `bench/crazy`, `bench/app`, `bench/realsvc` within noise; 8M-i64 peak recorded in the paper's table |
 | 6. delete privilege | drop the five knobs above | `grep -rn "@place\|@poolObject\|poolSlice\|poolResize" src/ stdlib/` = 0（v40 达成：src/ 与 stdlib/ 都是 0） |
 | 7. numbers | re-run `bench/memstudy`; update the memory table in the paper honestly | numbers match the code |
 
-Step 5 is where the 129 MB → ~70 MB improvement shows up, and it is a *library* change: the language
-only gained a zone handle.
+Step 5 的收益是让库自己写池成为可能：容器今天已不在池上，峰值改善由 `buf` 的地址预留拿到（一份 64 MB）。
 
 ## 7. Acceptance
 
