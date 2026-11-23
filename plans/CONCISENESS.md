@@ -195,7 +195,7 @@ s = s + 1.0             // 另一侧是 f64
 今天能用的东西：
 
 - `std::text::string`：`new` / `withCap` / `from(slice<u8>)` / `fromI64`；方法 `len`、`snapshot`、`clone`、
-  `push`、`append`、`concat`、`concatBytes`、`sub`、`at`、`find`、`contains`、`startsWith`、
+  `push`、`append`、`concat`、`sub`、`at`、`find`、`contains`、`startsWith`、
   `endsWith`、`removeFront`、`clear`、`hash`、`==`（`string` 与 `slice<u8>` 各一套）、`<`。
 - `std::text::stringio`（`impl string`）：`readLineFrom` / `readAllFrom` / `writeTo` / `writeLineTo`；
   对 `io::istream` 与 `fs::ifstream` 也有 `impl`。

@@ -261,9 +261,9 @@ let w: mut slice<u8> = v2.viewMut()
 | 读数 | `len` · `capacity` · `isEmpty` · `at(i) -> ?u8` |
 | 取内容 | `snapshot() -> slice<u8>`（**拷一份**）、`subView(lo, hi) -> slice<u8>`、`sub(lo, hi)` |
 | 拷贝 | `clone()`（内联态出来的仍是内联串） |
-| 比较 | `==` / `<`，右边可以是 `string` 也可以是 `slice<u8>`（所以 `s == "abc"` 成立） |
-| 拼接 | `concat(other) -> string`、`concatBytes(slice<u8>)`、就地 `append(slice<u8>)`、`push(u8)`、`appendByte` |
-| 运算符 | `a + b`：返回**新值**的拼接。右操作数可以是 `slice<u8>`、`string`、整数（按十进制）、`f64`/`f32`（6 位小数，`stringio` 里）或 `bool`；要求 `a` 是 `string`。分配落在调用点的 arena 上，可以在函数里拼完返回 |
+| 比较 | `==` / `<`，右边可以是 `string` 也可以是 `slice<u8>`（所以 `s == "abc"` 成立）；**两边都借**（`ref string` / 视图），不拷贝 |
+| 拼接 | `concat(slice<u8>) -> string`（传 `string` 会自动借出字节视图，不拷贝）、就地 `append(slice<u8>)`、`push(u8)`、`appendByte` |
+| 运算符 | `a + b`：返回**新值**的拼接。右操作数可以是 `slice<u8>`、`string`（按引用借，不拷贝）、整数（按十进制）、`f64`/`f32`（6 位小数，`stringio` 里）或 `bool`；要求 `a` 是 `string`。分配落在调用点的 arena 上，可以在函数里拼完返回 |
 | 追加数字 | `appendI64(v)`；`appendF64(x, prec)`（在 `stringio` 里，定点 `prec` 位小数，上限 20）。拼一行报表少一次临时 `string` |
 | 借出视图 | `view()`：只读字节视图，**不拷贝**；收 `slice<u8>` 的形参因此可以直接传 `string`（自动借出）。要独立拷贝仍写 `snapshot()` |
 | 直接打印 | `io::cout << s`（`string` 的 `<<` 重载在 `std::text::string` 里且收 `ref string`，`use std::text::string` 就够，不用写 `s.snapshot()`，也不复制） |
