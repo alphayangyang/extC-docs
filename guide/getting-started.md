@@ -8,7 +8,7 @@
 | 要做什么 | 需要 |
 |---|---|
 | `make` | `make`、C 编译器（构建时的 `CC` 变量默认 `gcc`；`extc` 在 `--run` / `--check-c` 里调用 C 编译器时默认用 `cc`）、`find`、`mkdir` |
-| `./tests/run.sh` · `./check.sh quick` | 另需 `python3`（并行器与闸门脚本） |
+| `./tests/run.sh` · `./check.sh precommit` | 另需 `python3`（并行器与闸门脚本） |
 | `./check.sh`（完整模式） | 基准脚本另用 `g++`、`rustc`、`go` |
 
 C 编译器不是只给测试用：`--run` / `--build` / `--check-c` 都调用它，可用环境变量 `$CC` 换成 `clang` 等。
@@ -19,7 +19,7 @@ C 编译器不是只给测试用：`--run` / `--build` / `--check-c` 都调用�
 |---|---|---|
 | `make` | 默认目标 `all`，只构建编译器 | `build/extc` |
 | `make test` | 构建后跑 `./tests/run.sh` | — |
-| `make status` | 跑 `./tests/run.sh` 与 `./check.sh quick`，再报未 push 的 commit 数 | `build/status-tests.log`、`build/status-check.log` |
+| `make status` | 跑 `./tests/run.sh` 与 `./check.sh precommit`，再报未 push 的 commit 数 | `build/status-tests.log`、`build/status-check.log` |
 | `make clean` | 删掉整个 `build/` | — |
 
 产物位置：
@@ -37,10 +37,12 @@ C 编译器不是只给测试用：`--run` / `--build` / `--check-c` 都调用�
 | `./build/extc <file.extc>` | 只生成 C，写到 stdout |
 | `./build/extc --run <file.extc>` | 生成 C、编译、运行 |
 | `./tests/run.sh` | 回归：正例 / 反例 / trap 三套 + arena、警告、ASan、注解套件 |
-| `./check.sh quick` | `./tests/run.sh` + 一批闸门 + 各子系统套件；不跑基准 |
-| `./check.sh` | quick 的全部，另加全语料 `--check-c`、正例生成物 ASan+UBSan、生成物快照、全部基准 |
+| `./check.sh precommit` | 提交前档：`./tests/run.sh` + 一批闸门 + 各子系统套件，去掉分钟级深水项（≈3 分钟） |
+| `./check.sh nobench` | push 前档：precommit 的全部，再加深水项（`lvl-witness`、`tests-assert`、`gate-reclaim-ledger`、`gate-perturb-run`）；不跑基准（≈6 分钟） |
+| `./check.sh ratchet` | 棘轮项：生成物哈希、发射身份、回收 idle 指纹。判据是冻结快照，只在改 codegen 或 plan 标志后跑 |
+| `./check.sh` | nobench 的全部，另加全语料 `--check-c`、正例生成物 ASan+UBSan、生成物快照、全部基准 |
 
-通过标准：`./tests/run.sh`、`./check.sh quick`、`./check.sh` 都以末行 `通过 N，失败 0` 报告，并且退出码为 0 当且仅当失败数为 0。
+通过标准：`./tests/run.sh`、`./check.sh precommit`、`./check.sh nobench`、`./check.sh` 都以末行 `通过 N，失败 0` 报告，并且退出码为 0 当且仅当失败数为 0。
 
 ## 4. 编译器用法
 
@@ -170,9 +172,9 @@ $ echo $?
 | 5 | `tests/asan/run.sh` | 内存安全形状在 ASan 下跑得干净 |
 | 6 | `tests/annot/run.sh` | `@inline` / `@unchecked` 真的生效，写错的编译期报错 |
 
-### 7.2 `./check.sh quick`
+### 7.2 `./check.sh precommit`
 
-先构建，跑 `./tests/run.sh`，再跑下列各类；任何一节失败都让整体变红：
+先构建，跑 `./tests/run.sh`，再跑下列各类；任何一节失败都让整体变红（`nobench` 在此之上再加分钟级深水项）：
 
 | 类别 | 内容 |
 |---|---|
@@ -182,7 +184,22 @@ $ echo $?
 | 元闸门 | 手册文体与覆盖 · 驱动开关页与 `--help` 一致 · 公开面清单 · `stdlib/INDEX` · 类型分支穷尽性 · AST 冻结 · 只读边界 · include guard · 并发守卫 … |
 | 攻击库 | 通过集合与 `tests/attacks/BASELINE` 逐行对比，多一条少一条都算红 |
 
-### 7.3 `./check.sh`（完整模式）另含什么
+### 7.3 `./check.sh ratchet`（只在改 codegen 后跑）
+
+棘轮项的判据不是"对不对"，而是**冻结快照**：
+
+| 项 | 判据 |
+|---|---|
+| `tools/golden.sh` | 生成物与 `tools/golden.sha256` 快照一致（判据另有一条：生成物必须是合法 C） |
+| `tools/emitted_identity.py --check --set core` | core 语料的生成物与冻结清单逐条一致 |
+| `tests/reclaim-idle/fingerprint.py check` | 每个源文件的默认档 / 关档生成物与 `tools/idle-fingerprint-baseline.tsv` 一致 |
+
+它们回答的是"这次改动的波及面，是不是我预期的这一批"。变化面解释得通再重冻：
+`tools/golden.sh --freeze`、`tools/emitted_identity.py --write --set core --why '<理由>'`、
+`tests/reclaim-idle/fingerprint.py freeze`（只想重冻受影响子集时加 `--only <子串> --merge`，
+它只替换本次扫到的行，其余行沿用旧基线）。
+
+### 7.4 `./check.sh`（完整模式）另含什么
 
 | 额外内容 | 说明 |
 |---|---|
@@ -191,9 +208,9 @@ $ echo $?
 | 生成物快照 | `tools/golden.sh`：观察项，与冻结哈希的差异不作为判据，判据只有「必须是合法 C」 |
 | 基准 | `bench/run.sh`（extC vs C）· `bench/heavy/` · `bench/dyn/*` · `bench/stl/` · `bench/app/` · `bench/stress/` · `bench/compile/` · `bench/oi/` · `bench/oi/persist/` |
 
-### 7.4 数字从哪来
+### 7.5 数字从哪来
 
-`make status` 依次打印三行：`tests/run.sh` 的末行与退出码、`./check.sh quick` 的末行与退出码、未 push 的 commit 数。两条命令的完整输出落进 `build/status-tests.log` 与 `build/status-check.log`。数字由命令产生，本文不写死。
+`make status` 依次打印三行：`tests/run.sh` 的末行与退出码、`./check.sh precommit` 的末行与退出码、未 push 的 commit 数。两条命令的完整输出落进 `build/status-tests.log` 与 `build/status-check.log`。数字由命令产生，本文不写死。
 
 ## 报错
 
