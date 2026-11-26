@@ -85,6 +85,7 @@
 | vector 的容器方法面：insert / removeAt / truncate / reserve / contains / indexOf / sort / reverse / fill / == | [stdlib.md](stdlib.md) · 2. `stl::*`：容器 | 实现 | `stdlib/std/data/vector.extc` · `tests/stl/vector_ops.extc` |
 | hashMap 遍历器 `iterKeys()` / `iterValues()`（`iter`/`next`/`value` 协议，for 与 while 通用） | [stdlib.md](stdlib.md) · 2. `stl::*`：容器 | 实现 | `stdlib/std/data/hashMap.extc` · `tests/hashmap/iter.extc` |
 | io/fs/net/http/proc/parallel/coro/json 等模块 | [stdlib.md](stdlib.md) · 3. `std::*`：模块 | 实现 | `stdlib/std/` |
+| 终端屏幕对象 `screen`、`color`、`key` 解码（备用屏/光标/定位/颜色 + 方向键与 Ctrl）；PTY 判据 | [stdlib.md](stdlib.md) · 3. `std::*`：模块 | 实现 | `stdlib/std/tui.extc` · `tests/tui` |
 | 容器与引用/视图/所有权组合时容易写错的形状 | [stdlib.md](stdlib.md) · `4. 今天会咬人的组合` | 部分 | `tests/stl` |
 
 ## 模块与 C 互操作：`reference/modules-cabi.md`

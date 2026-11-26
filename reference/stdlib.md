@@ -12,6 +12,7 @@
 | `use std::data::map` | 有序映射容器 |
 | `use std::hash::digest` | SHA-256 |
 | `use std::coro::scheduler` | 协程调度器 |
+| `use std::tui` | 终端屏幕对象与按键解码（raw 模式 + ANSI） |
 
 `use a::b` 找的就是文件 `a/b.extc`；搜索顺序是**入口文件所在目录 → 每个 `-I <dir>` → 标准库目录**
 （标准库目录 = `$EXTC_STD`，没设就是 `extc` 可执行文件旁边的 `../stdlib`）。
@@ -898,7 +899,12 @@ fn main() -> i32 {
 语义：声明了 `close` ⇒ 它是**资源**，"开了没关"编译器会提醒；
 不是终端时给 `failure(notATerminal(fd))`（不是 trap）；trap 路径会经运行期钩子把终端还原
 （判据：`tests/io/run.sh` 的 `raw-trap` 一节）。
-**没有** size / color / 光标 / 清屏 / 按键解码（`grep` 整个 `term.extc` 只有 raw 开关）。
+
+| 名字 | 签名 |
+|---|---|
+| `ioctl` / `TIOCGWINSZ` / `FIONBIO` | 屏幕尺寸与非阻塞开关的原语；`struct winsize` 的布局留在 C 侧，extC 只看见字节 |
+
+原语层只到这里：**没有** color / 光标 / 清屏 / 按键解码。把它们包成对象的是下一节 `std::tui`。
 
 ```extc
 use std::io
@@ -918,6 +924,67 @@ fn main() -> i32 {
 }
 ```
 实测（stdin 不是终端，`</dev/null`）：`not-a-tty fd=0`。
+
+### `std::tui`：屏幕与按键
+
+对象层：`std::term` 只给原语（raw 开关、尺寸、非阻塞），这一层把 ANSI 转义与按键解码包成对象。
+
+| 名字 | 签名 |
+|---|---|
+| `dims` | `struct dims { cols: i64, rows: i64 }` |
+| `termSize(fd)` | `fn termSize(fd: i32) -> dims`；拿不到尺寸（fd 不是终端）就回 `80x24` |
+| `color` | 17 个变体：`defaultColor`、8 个基本色、8 个高亮色 |
+| `fgColor(c)` / `bgColor(c)` | 返回对应的 ANSI 序列（`slice<u8>`）；写不写屏由调用者决定 |
+| `key` | `rune(u8)` / `ctrl(u8)` / `up` / `down` / `left` / `right` / `home` / `end` / `pageUp` / `pageDown` / `insert` / `delete` / `enter` / `tab` / `backspace` / `esc` / `none` |
+| `readKey(fd)` | 读一键并解码成上面 `key` 的一个变体 |
+| `screen::open(fd)` | `-> result<screen, io::ioError>`；切 raw、进备用屏、藏光标、清屏 |
+| `screen::isOpen` / `screen::size` | 还开着吗 / 当前尺寸（`dims`） |
+| `screen::clear` | 清屏并把光标移到左上角 |
+| `screen::goto(x,y)` / `screen::put(s)` / `screen::draw(x,y,s)` | 绝对定位与写字节；坐标 0 起 |
+| `screen::fg(c)` / `screen::bg(c)` / `screen::bold` / `screen::resetStyle` | 前景色、背景色、粗体、复位 |
+| `screen::hideCursor` / `screen::showCursor` | 光标开关 |
+| `screen::flush` | 提交一帧（与 `io::cout` 同一个缓冲） |
+| `screen::nextKey` | 等价于 `readKey(self.fd)` |
+| `screen::close` | `@drop` 钩子，也是普通方法：退出备用屏、显示光标、flush、恢复终端；幂等 |
+
+语义：`screen::open` 失败给 `failure(...)`（fd 不是终端就是 `notATerminal(fd)`），不 trap——
+要求"必须有终端"就写 `!`。打开后没显式 `close` 也没关系：`@drop` 在离开作用域时按相反顺序复原，
+**trap 路径同样复原**（走 `std::io` 的同一套运行期钩子）。`close` 之后 `isOpen()` 是 `false`，再调 `close()` 什么也不做。
+
+`readKey` 的 ESC 歧义：单按 ESC 与方向键（`ESC [ A`）开头相同。这里先把 fd 切成非阻塞再读后续字节，
+短暂等待（每个窗口 1 ms，最多 3 次）没有后续字节就当它是 `esc`；有就按 CSI/SS3 解码成方向键、
+Home/End/PageUp/PageDown、Insert/Delete。Ctrl+字母给 `ctrl(n)`（`n` 是 1..26）。
+
+<!-- fragment -->
+```extc
+use std::io
+use std::tui
+fn main() -> i32 {
+    var s = tui::screen::open(io::STDIN_FD)!
+    s.clear()
+    s.fg(tui::color.cyan)
+    s.draw(2, 1, "hello")
+    s.resetStyle()
+    s.flush()
+    return 0
+}
+```
+（上面这段要真终端，所以标成片段；完整判据在 `tests/tui/pty_run.py`：真的开 PTY、喂方向键、比对 ANSI 序列与 termios 复原。）
+
+不碰屏幕的部分在管道里也能跑：
+
+```extc
+use std::io
+use std::tui
+fn main() -> i32 {
+    let d = tui::termSize(io::STDOUT_FD)
+    io::cout << "screen " << d.cols << "x" << d.rows << "\n"
+    io::cout << tui::fgColor(tui::color.cyan) << "cyan"
+    io::cout << tui::fgColor(tui::color.defaultColor) << "\n"
+    return 0
+}
+```
+实测（stdout 是管道）：`screen 80x24`，接着 `\x1b[36mcyan` 与 `\x1b[39m`。
 
 ### `std::loop`：两个钟、秒表与定时表
 
