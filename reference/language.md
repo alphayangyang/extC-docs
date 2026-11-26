@@ -82,7 +82,7 @@ fn main() -> i32 {
 
 | 记号 | 拼写 | 说明 |
 |---|---|---|
-| 整数 | `42` · `0x2A` · `0b1010` · `0o777` · `1_000_000` | 十进制 · 十六进制 · 二进制 · 八进制；`_` 可以分组（不能打头、不能结尾、不能紧跟进制前缀）；范围是有符号 64 位，越界报 `integer literal exceeds the supported signed 64-bit range` |
+| 整数 | `42` · `0x2A` · `0b1010` · `0o777` · `1_000_000` | 十进制 · 十六进制 · 二进制 · 八进制；`_` 可以分组（不能打头、不能结尾、不能紧跟进制前缀）；范围 0 … 2`64`-1；超过 `i64` 上限的按 `u64` 取型（见 3.1），再大报 `integer literal exceeds the supported 64-bit range` |
 | 浮点 | `3.14` · `1e9` · `2.5E-3` · `3.141_592` | `.` 后面必须跟数字（`1..2` 是区间、`1.foo` 是字段访问）；`e`/`E` 后可选 `+`/`-`；`_` 同样可分组 |
 | 字符 | `'a'` · `'\n'` · `'\x41'` | **就是一个整数常量**（携带该字节值）；恰好一个字节，多字节报错 |
 | 字符串 | `"你好"` | 内容不含引号；**不能跨行**（跨行报 `unterminated string literal`） |
@@ -117,9 +117,11 @@ fn main() -> i32 { let __x = 1  return 0 }
   - 对齐 `<` 左 / `>` 右 / `^` 居中，前面可加一个填充字节（`{:*^8}`）；不写对齐时文本靠左、数字靠右。
   - `0` 是零填充（默认右对齐），负号在数字前：`{n:04}` 遇到 -5 输出 `-005`；宽度按**字节**算。
   - `.精度` 只对浮点有意义（`{v:.2f}`），类型码 `d` / `f` / `s` 只做一致性校验。
-  - 能带说明符的只有输出流上的整数、浮点、`slice<u8>` / `mut slice<u8>`；别的类型或接收者不是流时报
+  - 能带说明符的只有输出流上的整数（含 `u64`）、浮点、`slice<u8>` / `mut slice<u8>`；别的类型或接收者不是流时报
     `` `T` cannot take a format specifier ``。
 - 空槽 `{}`、未闭合 `{`、多余的 `}`、整体为空的 `f""`、空说明符 `{x:}` 都是编译错误。
+- `u64` 槽按**无符号十进制**打印，可以打满 20 位（`f"{0xFFFFFFFFFFFFFFFF}"` 输出
+  `18446744073709551615`）；`{n:04}` 这类宽度说明符只在位数不够时补零，不会因为高位是 1 而当成负数。
 
 ```extc
 // 结果：tab:[	] nl:[\n] quote:["] backslash:[\] hex:[A]
@@ -155,6 +157,12 @@ fn main() -> i32 {
 没有 `char`、没有 `string` 关键字。字符串字面量的类型是 `slice<u8>`（字节视图，零拷贝）；
 `std::text::string` 是标准库里可增长的那个类型（见 [`stdlib.md`](stdlib.md)）。
 
+整数字面量按目标类型适配（`0` 给 `i64` 就是 `i64`；没有上下文时按 `i32`，装不下再 `i64`）。
+**超过 `i64` 上限的字面量类型是 `u64`**：`18446744073709551615` 与 `0xFFFFFFFFFFFFFFFF`
+都合法，各自是 `u64`；把它写进 `i64` 位置报
+``initializer: literal ``18446744073709551615`` does not fit in ``i64```（位模式仍在：
+`i64(0xFFFFFFFFFFFFFFFF)` 是 `-1`）。
+
 ### 3.2 聚合
 
 | 写法 | 例子 | 说明 |
@@ -168,6 +176,12 @@ fn main() -> i32 {
 | 可空引用 | `?ref T`（可写：`mut ?ref T`） | 零值是 `null` |
 | 函数类型 | `fn(i64) -> i64` | 裸代码指针，**没有零值**（可空写 `option<fn …>`） |
 | 可空值 | `?T`（非引用）= `option<T>` | `?i64` ≡ `option<i64>` |
+
+定长数组的 `.len` 是**编译期常量**：`[4]i64` 的 `a.len` 就是 `4`，可以直接当循环界
+（`for i in 0..a.len`）与下标范围用；多维写 `b[0].len` / `b.len`，结构体字段写 `f.xs.len`。
+它是类型的一部分，**不能赋值**：`a.len = 2` 报
+``cannot assign ``len`` of a fixed array: its length is part of the type``。
+视图（`slice<T>`）的 `.len` 是运行期字段；`vector` 的是方法 `v.len()`，三种写法各自不同。
 
 构造：
 
@@ -781,7 +795,14 @@ fn main() -> i32 {
 - 必须有初始化式：`const N: i64` 报````const` needs an initializer```（零初始化的不可变全局是 `let`）。
 - 只能在顶层：`const` 写进函数体报````const` is a module-level declaration```；函数里要不可变绑定用 `let`。
 - 改一个 `const` 报```cannot assign to `N`, which is a `const````，不会说成 `let`。
-- 别的模块的 `const` 目前不能当长度用：长度取自同文件、写在类型上方的模块级 `const`。
+- 长度也能来自**别的模块**的 `const`，三条路都行：`use board::{N}` 或 `use board::*` 之后写
+  `[N]T`；或者 `use board` 之后写限定名 `[board::N]T`（限定名不要求名单里有它，写多段路径也行）。
+  供应方那个 `const` 必须**公开**（`@private` 不导出）、整数类型、初值是整数字面量（可带负号），
+  且值大于 0；否则报
+  ``array length: ``board::F`` is not a ``const`` with an integer literal initializer in the module it is imported from``
+  或 `array length must be positive, got -2`。
+- 两个导入各自提供同名 `const` 时，裸名 `[N]T` 报
+  ``array length: ``N`` is declared by more than one imported module``，写 `[mod::N]T` 消歧。
 ---
 
 ## 7. 引用与视图

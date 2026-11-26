@@ -38,6 +38,10 @@
 | 泛型函数与泛型类型，按实例单态化 | [language.md](language.md) · `4. 泛型` | 实现 | `examples/generics.extc` |
 | 给泛型实例挂方法（slice<T> 的方法集） | [language.md](language.md) · 3.11 `impl` 挂在泛型实例上：`slice<T>` 的方法 | 实现 | `tests/instimpl` |
 | 无载荷/带载荷枚举挂方法，trait 与 dyn 一起可用 | [language.md](language.md) · 3.12 `impl` 也能给枚举挂方法 | 实现 | `tests/impl/enum_methods.extc` · `tests/impl/enum_trait_dyn.extc` |
+| 定长数组的 `.len`：编译期长度，可进循环界与下标范围，不可赋值 | [language.md](language.md) · `3.2 聚合` | 实现 | `tests/features/len.extc` |
+| 超过 `i64` 上限的整数字面量（类型 `u64`），以及 `u64` 的 f-string / 说明符输出 | [language.md](language.md) · `2.2 格式化字符串 f"…"` | 实现 | `tests/features/u64.extc` |
+| 导入另一个模块的 `const` 当定长数组长度（名单 / 通配 / 限定名三条路） | [language.md](language.md) · `6.1 顶层 const：值先定，也能当数组长度` | 实现 | `tests/features/importconst` |
+| `u64` 的 `popcount()` / `clz()` / `ctz()` | [stdlib.md](stdlib.md) · `1. prelude：不用 use 就能用` | 实现 | `tests/features/bits.extc` |
 | 静态分发与动态分发，协议实现的规则 | [language.md](language.md) · 5. 协议：`trait` 与 `dyn` | 实现 | `tests/dyn` |
 | let/var/多名字声明、遮蔽、零初始化、全局的常量初始化式 | [language.md](language.md) · `6. 变量与可变性` | 实现 | `examples/shadowing.extc` |
 | 模块级 const，整数常量当数组长度 | [language.md](language.md) · 6.1 顶层 `const`：值先定，也能当数组长度 | 实现 | `tests/constgen/const_global.extc` · `tests/constgen/run.sh` |

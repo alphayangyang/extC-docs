@@ -56,7 +56,8 @@ prelude 是编译器在每个编译单元前先过一遍的一段 extC 源码。
 |---|---|
 | `assert(cond)` / `assertMsg(cond, msg)` | 条件不成立就 `trap`（报文带文件与行号）；`@inline`，`-O2` 下没有调用 |
 | `unreachable()` | 等价于 `trap("unreachable code was reached")`，给"这里到不了"用 |
-| 数字方法 | `n.abs()` · `n.min(o)` · `n.max(o)` · `n.clamp(lo, hi)`（`i64`/`i32`/`f64`；`u64` 只有 `min`/`max`） |
+| 数字方法 | `n.abs()` · `n.min(o)` · `n.max(o)` · `n.clamp(lo, hi)`（`i64`/`i32`/`f64`） |
+| `u64` 的位操作 | `x.popcount()`（置位数）· `x.clz()` / `x.ctz()`（前导 / 尾部零位数；`x == 0` 时都返回 `64`）· `x.min(o)` / `x.max(o)`；纯位运算实现，不需要额外运行期 |
 | 数字转换 | `i64::toF64` · `i64::toI32` · `i32::toI64`（显式转换仍是 `f64(n)` 那种写法） |
 
 文本方法挂在**字节视图**上，所以字符串字面量直接能点出来（不用先 `string::from`）：
@@ -291,14 +292,14 @@ let w: mut slice<u8> = v2.viewMut()
 
 | 方法 | 签名 |
 |---|---|
-| 构造 | `string::create(c)` · 模块级 `string::withCap(c)` / `new()` / `empty()` / `from(b)` / `fromI64(n)` |
+| 构造 | `string::create(c)` · 模块级 `string::withCap(c)` / `new()` / `empty()` / `from(b)` / `fromI64(n)` / `fromU64(n)` |
 | 读数 | `len` · `capacity` · `isEmpty` · `at(i) -> ?u8` |
 | 取内容 | `snapshot() -> slice<u8>`（**拷一份**）、`subView(lo, hi) -> slice<u8>`、`sub(lo, hi)` |
 | 拷贝 | `clone()`（内联态出来的仍是内联串） |
 | 比较 | `==` / `<`，右边可以是 `string` 也可以是 `slice<u8>`（所以 `s == "abc"` 成立）；**两边都借**（`ref string` / 视图），不拷贝 |
 | 拼接 | `concat(slice<u8>) -> string`（传 `string` 会自动借出字节视图，不拷贝）、就地 `append(slice<u8>)`、`push(u8)`、`appendByte` |
 | 运算符 | `a + b`：返回**新值**的拼接。右操作数可以是 `slice<u8>`、`string`（按引用借，不拷贝）、整数（按十进制）、`f64`/`f32`（6 位小数，`stringio` 里）或 `bool`；要求 `a` 是 `string`。分配落在调用点的 arena 上，可以在函数里拼完返回 |
-| 追加数字 | `appendI64(v)`；`appendF64(x, prec)`（在 `stringio` 里，定点 `prec` 位小数，上限 20）。拼一行报表少一次临时 `string` |
+| 追加数字 | `appendI64(v)` · `appendU64(v)`；`appendF64(x, prec)`（在 `stringio` 里，定点 `prec` 位小数，上限 20）。拼一行报表少一次临时 `string` |
 | 借出视图 | `view()`：只读字节视图，**不拷贝**；收 `slice<u8>` 的形参因此可以直接传 `string`（自动借出）。要独立拷贝仍写 `snapshot()` |
 | 直接打印 | `io::cout << s`（`string` 的 `<<` 重载在 `std::text::string` 里且收 `ref string`，`use std::text::string` 就够，不用写 `s.snapshot()`，也不复制） |
 | 查找 | `find(needle) -> ?i64`（无匹配 `none`）、`contains`、`startsWith`、`endsWith`、`hash()` |
@@ -327,6 +328,7 @@ let w: mut slice<u8> = v2.viewMut()
 | `string::fromF64` | `fn fromF64(x: f64, prec: i64) -> string`：定点格式化成字符串（`prec` 位小数、四舍五入；`prec` 上限 20）|
 | `string::padText` | `fn padText(v: slice<u8>, width: i64, fill: u8, align: i64) -> string`：按字节宽度排版（`align` 用 `io::LEFT`/`io::RIGHT`/`io::CENTER`；宽度不够不截断）—— 值 f-string 的 `{s:>8}` 走它 |
 | `string::padI64` | `fn padI64(v: i64, width: i64, fill: u8, align: i64) -> string`：整数排版；`0` 填充时符号在前（`-5` 宽 4 ⇒ `-005`）—— 值 f-string 的 `{n:>4}` / `{n:03}` 走它 |
+| `string::padU64` | `fn padU64(v: u64, width: i64, fill: u8, align: i64) -> string`：无符号版本的整数排版（没有符号位，零填充就是纯前导 0）—— 值 f-string 的 `{u:>4}` / `{u:03}` 走它 |
 | `string::padF64` | `fn padF64(x: f64, width: i64, prec: i64, fill: u8, align: i64) -> string`：定点 + 排版（`prec` 上限 20）—— 值 f-string 的 `{x:8.2f}` 走它 |
 
 <!-- no-run: 需要当前目录的 std-e-in.txt 夹具 -->
@@ -781,7 +783,7 @@ fn main() -> i32 {
 | `cout` / `cerr` / `cin` | `ostream { fd: 1 }` / `errStream { }` / `istream { fd: 0 }` |
 | `endl` | `let endl: slice<u8> = "\n"` |
 | `ostream <<` | `i64` / `i32` / `i16` / `i8` / `u32` / `u16` / `u8` / `f64` / `f32` / `bool` / `slice<u8>` / `mut slice<u8>` |
-| `padText` / `padInt` / `padF` | 宽度 + 填充字节 + `LEFT`/`RIGHT`/`CENTER` | ；常量 |
+| `padText` / `padInt` / `padUInt` / `padF` | 宽度 + 填充字节 + `LEFT`/`RIGHT`/`CENTER`（`padUInt` = 无符号整数的流上版本） | ；常量 |
 | `writer` | `struct writer { fd, buf, len }`（`@noCopy`）；`write` / `flush` / `cap` |
 | `writerOf(fd)` | 造一个带 64 KiB 缓冲的 writer |
 | `reader` | `avail` / `buffered` / `fill` / `nextByte` / `eof` / `nextLine` / `nextLineRaw` / `skipSpace` / `nextToken` / `nextInt` |
