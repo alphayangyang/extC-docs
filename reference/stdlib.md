@@ -84,7 +84,7 @@ prelude 是编译器在每个编译单元前先过一遍的一段 extC 源码。
   存储，`@noCopy`：`var b = a` 是**转移**，要独立副本写 `clone()`。元素所有权接上（元素进容器是移动，
   `clear`/`compact`/`release`/`remove` 逐元素跑钩子），所以 `hashMap<string, i32>` 这类拥有元素的容器可用。
 - **`map` / `set` 系列**：B+ 树的七块平坦列（键、值、子、节点标量）全部是 `block<T>`，同样 `@noCopy`、
-  元素所有权已接；`release()` 整批归还，`shrink()` 缩高水位。
+  元素所有权已接；`release()` 整批归还，`shrinkToFit()` 缩高水位。
 
 这些容器的存储是它们**自己的**，不是帧里的一段：换缓冲时旧片当场归还，所以"反复建、反复丢"是
 稳态内存。三种存储（帧、缓冲区基质、对象表）各自适合什么、以及选错的代价，见[内存模型](../design/MEMORY-MODEL.md)。
@@ -101,7 +101,7 @@ prelude 是编译器在每个编译单元前先过一遍的一段 extC 源码。
 | 能不能装引用 | 能：写元素时经运行期的**外部边表**登记（键 = 槽地址），结构动作按区间撤销 |
 | 取内容 | `view()` 借出 `[0, len)` 的只读视图、`viewMut()` 借出可写视图；要独立拷贝用 `snapshot()` |
 | 深拷贝 | `clone()`；按内容比较直接写 `v == w`（`==` 的两个形参都是 `ref`，不复制），`v.view() == w.view()` 也行 |
-| 收尾 | `shrink()`（尾部页还给系统）/ `release()`（整片预留还回，`drop` 也走这里） |
+| 收尾 | `shrinkToFit()`（尾部页还给系统）/ `release()`（整片预留还回，`drop` 也走这里） |
 | 迭代顺序 | 插入序（dense 连续） |
 
 `vector` 的方法：`withCap` · `new` · `len` · `capacity` · `maxCapacity` · `relocations` ·
@@ -287,12 +287,12 @@ let w: mut slice<u8> = v2.viewMut()
 把整片还回去。
 
 两个容量数要分清：`capacity()` 报的是**答应给调用者的字节数**，基质实际给的片可能更大（尺寸类或
-量子），所以 `grow()` 只要新容量还在同一片里就只抬这个数、不搬字节；`shrink()` 只在片比需要的容量
+量子），所以 `grow()` 只要新容量还在同一片里就只抬这个数、不搬字节；`shrinkToFit()` 只在片比需要的容量
 大一倍以上时才搬一次家。`clone()` 一次要到刚好装下的容量，不走 1.5 倍逐级扩容。
 
 | 方法 | 签名 |
 |---|---|
-| 构造 | `string::create(c)` · 模块级 `string::withCap(c)` / `new()` / `empty()` / `from(b)` / `fromI64(n)` / `fromU64(n)` |
+| 构造 | `string::withCapacity(c)` · 模块级 `string::withCap(c)` / `new()` / `empty()` / `from(b)` / `fromI64(n)` / `fromU64(n)` |
 | 读数 | `len` · `capacity` · `isEmpty` · `at(i) -> ?u8` |
 | 取内容 | `snapshot() -> slice<u8>`（**拷一份**）、`subView(lo, hi) -> slice<u8>`、`sub(lo, hi)` |
 | 拷贝 | `clone()`（内联态出来的仍是内联串） |
@@ -303,7 +303,7 @@ let w: mut slice<u8> = v2.viewMut()
 | 借出视图 | `view()`：只读字节视图，**不拷贝**；收 `slice<u8>` 的形参因此可以直接传 `string`（自动借出）。要独立拷贝仍写 `snapshot()` |
 | 直接打印 | `io::cout << s`（`string` 的 `<<` 重载在 `std::text::string` 里且收 `ref string`，`use std::text::string` 就够，不用写 `s.snapshot()`，也不复制） |
 | 查找 | `find(needle) -> ?i64`（无匹配 `none`）、`contains`、`startsWith`、`endsWith`、`hash()` |
-| 容量 | `grow()`（1.5 倍）、`shrink()`、`clear()`、`release()`、`removeFront(n)` |
+| 容量 | `grow()`（1.5 倍）、`shrinkToFit()`、`clear()`、`release()`、`removeFront(n)` |
 | 解析 | `string::toI64(b) -> ?i64`；`string::toF64(b) -> ?f64`（整数/小数/指数写法，至少一位数字；不接受 `.5`、`inf`、`nan`、十六进制） |
 | 切分 | `string::split(s: slice<u8>, sep: slice<u8>) -> vector<slice<u8>>`（每段是 `s` 的零拷贝视图；空 `sep` 返回空数组；末尾空段也入列 ⇒ 段数 = 出现次数 + 1；先 `use std::data::vector`）|
 | 拼接 | `string::join(parts: slice<slice<u8>>, sep: slice<u8>) -> string`（空数组给空串；`sep` 可以是空视图；一次按总长分配）|
@@ -363,7 +363,7 @@ fn main() -> i32 {
 | 方法 | 签名 |
 |---|---|
 | `withCap` / `new` | `fn withCap(want: i64) -> map<K, V>` / `fn new() -> map<K, V>` |
-| `len` / `capacity` 之类 | `len` · `nodeCount` · `capOf` · `height` |
+| `len` / `capacity` 之类 | `len` · `nodeCount` · `capacity` · `height` |
 | `contains` / `get` / `[]` | `fn get(...) -> ?V`；缺键给 `none`（**不插入默认值**） |
 | `put` / `[]=` | `fn put(self: mut ref map<K, V>, k: K, v: V) -> bool`；**true = 键本来就在**（覆盖） |
 | `remove` | 返回是否删掉了；会借/并再平衡 |
@@ -415,12 +415,12 @@ fn main() -> i32 {
 | 方法 | 签名 |
 |---|---|
 | `withCap` | `fn withCap(want: i64) -> hashMap<K, V>` |
-| `len` / `capOf` / `bytesOf` | 活元素数、桶数、三列字节 |
+| `len` / `capacity` / `bytesOf` | 活元素数、桶数、三列字节 |
 | `contains` / `get` / `[]` | `fn get(...) -> ?V` |
 | `put` / `[]=` | `fn put(k, v) -> bool`；**true = 键本来就在**（值被移动进桶）|
 | `remove` / `take` | `fn remove(k) -> bool` / `fn take(k) -> ?V`（搬出去，不是拷）|
 | `clear` / `compact` / `release` | 清（容量留着）、按活元素重排到刚好够的容量、整批还回去 |
-| 按桶位扫 | `keyAt(i)` / `valAt(i)` / `liveAt(i)`，`i` 走 `[0, capOf())`（**不是插入序**；桶位随重哈希变）|
+| 按桶位扫 | `keyAt(i)` / `valAt(i)` / `liveAt(i)`，`i` 走 `[0, capacity())`（**不是插入序**；桶位随重哈希变）|
 | 遍历 | `iterKeys()` / `iterValues()` 给遍历器（`iter`/`next`/`value` 三方法，见手册的迭代协议）：`for k in m.iterKeys()`，或 `while it.next() { it.value() }` |
 | `clone` | 深拷贝 |
 
@@ -443,7 +443,7 @@ fn bump(m: mut ref hashMapI64<i64>, k: i64) -> i64 {
 
 `hashSetI64` 是"没有值的 map"（值是一格 `u8`），面与 `hashMap` 对齐，
 **唯一差别**：`put` 返回 true 表示**新元素**。`withCap` · `len` ·
-`contains` · `put` · `remove` · `clear` · `release` · `keyAt` · `liveAt` · `capOf` · `clone`。
+`contains` · `put` · `remove` · `clear` · `release` · `keyAt` · `liveAt` · `capacity` · `clone`。
 
 ```extc
 use std::io
@@ -506,8 +506,8 @@ fn main() -> i32 {
 | 方法 | 签名 |
 |---|---|
 | `withCap` | `fn withCap(want: i64) -> linMap<K, V>` |
-| `len` / `capOf` | `fn len(...) -> i64` / `-> i64` |
-| `find` / `contains` | `fn find(...) -> i64`（位置，`<0` = 没有） / `-> bool` |
+| `len` / `capacity` | `fn len(...) -> i64` / `-> i64` |
+| `contains` | `fn contains(...) -> bool`（键在不在；按桶位查找是内部 `findSlot`） |
 | `get` / `[]` | `fn get(...) -> ?V` |
 | `put` / `[]=` | 插入或覆盖；返回 true = 键本来就在 |
 | `remove` | swap-remove；返回是否删掉 |
@@ -556,7 +556,7 @@ fn main() -> i32 {
 | 名字 | 语义 |
 |---|---|
 | `withCap(want)` | `fn withCap(want: i64) -> block<T>`：一块至少装 `want` 个元素的存储 |
-| `capacity()` / `used()` / `setUsed(u)` | 容量 / 现在装着几个元素 / 把 `u` 个槽认作元素（容器自己记账） |
+| `capacity()` / `len()` / `setLen(u)` | 容量 / 现在装着几个元素 / 把 `u` 个槽认作元素（容器自己记账） |
 | `bytesOf()` | 这块存储实际握着多少字节（账本口径） |
 | `[]` / `[]=` | 读；写一个**空槽**（`elemPut`，不碰旧字节；覆盖活元素先 `dropAt(i)`） |
 | `view(from,to)` / `viewMut(from,to)` | 只读 / 可写的元素视图 |
@@ -1235,9 +1235,9 @@ fn main() -> i32 {
 | 名字 | 签名 |
 |---|---|
 | `parseRequest(raw) -> request` | 拆请求行 + 头 |
-| `request::path` / `query(name)` / `header(name)` / `length` / `isGet` / `isPost` | |
+| `request::path` / `query(name)` / `header(name)` / `bodyLength` / `isGet` / `isPost` | |
 | `parseResponse(raw) -> response` | 拆状态行 + 头 |
-| `response::header` / `length` / `isOk` / `is(status)` | |
+| `response::header` / `bodyLength` / `isOk` / `is(status)` | |
 | `reasonOf` / `headerOf` / `contentLength` / `pathOf` / `queryOf` | 自由函数版本 |
 | `beginResponse` / `putHeader` / `putHeaderI64` / `endHeaders` / `simpleResponse` / `beginRequest` | 拼字节 |
 | `decode(src, dst)` | 百分号解码 |
@@ -1256,10 +1256,10 @@ use std::net
 fn main() -> i32 {
     let raw: slice<u8> = "GET /a/b?x=1 HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\n\r\nabc"
     var r: net::request = net::parseRequest(raw)
-    io::cout << "method=" << r.method << " path=" << r.path() << " host=" << (r.header("host") ?? "none") << " q=" << (r.query("x") ?? "none") << " len=" << r.length() << " isGet=" << r.isGet() << "\n"
+    io::cout << "method=" << r.method << " path=" << r.path() << " host=" << (r.header("host") ?? "none") << " q=" << (r.query("x") ?? "none") << " len=" << r.bodyLength() << " isGet=" << r.isGet() << "\n"
     let resp: slice<u8> = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"
     var p: net::response = net::parseResponse(resp)
-    io::cout << "status=" << p.status << " reason=" << net::reasonOf(p.status) << " ok=" << p.isOk() << " len=" << p.length() << "\n"
+    io::cout << "status=" << p.status << " reason=" << net::reasonOf(p.status) << " ok=" << p.isOk() << " len=" << p.bodyLength() << "\n"
     return 0
 }
 ```
@@ -1434,7 +1434,7 @@ fn main() -> i32 {
 
 | 名字 | 签名 |
 |---|---|
-| `find(hay, needle) -> i64` | 最左匹配偏移；没有 `-1`；空模式 `0` |
+| `find(hay, needle) -> ?i64` | 最左匹配偏移；没有 = `none`；空模式 `some(0)` |
 | `contains(hay, needle) -> bool` | |
 | `eq(a, b) -> bool` | 整块比较（`n <= 0` 算相同） |
 | `copy(dst, src) -> i64` | 原地整块拷贝；装不下 `-1` |
@@ -1445,8 +1445,8 @@ fn main() -> i32 {
 use std::io
 use std::mem
 fn main() -> i32 {
-    let at = mem::find("hello world", "world")
-    io::cout << "find=" << at << " miss=" << mem::find("abc", "z") << " eq=" << mem::eq("ab", "ab") << " contains=" << mem::contains("abc", "bc") << "\n"
+    let at = mem::find("hello world", "world") ?? -1
+    io::cout << "find=" << at << " miss=" << (mem::find("abc", "z") ?? -1) << " eq=" << mem::eq("ab", "ab") << " contains=" << mem::contains("abc", "bc") << "\n"
     var dst: [4]u8
     let n = mem::copy(dst[..], "wxyz")
     io::cout << "copied=" << n << " dst=" << dst[0..n] << "\n"

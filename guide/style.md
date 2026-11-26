@@ -9,8 +9,9 @@ extC 没有 `class`、没有继承、没有属性语法。它的对象就是**�
 
 ## 1. 对象 = 数据 + 方法
 
-- **字段装状态，`impl` 装行为。** 同一类型的全部方法写在一个 `impl` 块里，不要一半写在
-  struct 体内、一半散在别处。
+- **字段装状态，方法装行为。** 方法有两种合法位置：写在 struct 体内（数据与行为相邻，
+  标准库统一这么写），或写在 `impl` 块里（给 @ext 外来类型加方法时必须用 impl；
+  类型自己也可以）。**同一个类型的全部方法放在同一处**，不要一半在体内、一半散在 impl 块里。
 - **字段默认藏起来。** 公开的数据面用 `@private` 收紧，外面只通过方法读；要交出视图就
   给一个返回 `slice<T>` 的方法（`view()` / `viewMut()`），而不是公开字段让别人自己拼。
 - **方法签名三档，按“调用者对对象做什么”选：**
@@ -145,14 +146,44 @@ fn load(path: slice<u8>) -> result<config, err> {
 完整例子：[`examples/gomoku.extc`](../../extC_Compiler/examples/gomoku.extc)（对局程序，棋盘内联）与
 [`examples/gomoku-board.extc`](../../extC_Compiler/examples/gomoku-board.extc)（纯棋盘对象）。
 
-## 8. 命名与模块
+## 8. 命名与写法：一个概念一个拼写
 
-- **一个概念一个拼写。** 同一个东西不要在文档里叫 A、代码里叫 B、诊断里叫 C。
-- 类型名 camelCase、小写开头（`board`、`hashMap`、`vector`）；trait 名大写开头；
-  函数与方法小写开头；常量全大写（`const N: i64 = 15`，顶层）。
-- 模块用 `use std::data::vector` 显式导入；对外门面用 `pub use` 列清单，内部实现用
-  `@private` 藏起来。
-- 公开的类型要配 `@code` 例子：公开面闸门会拿手册核对这些成员有没有被写到。
+**大小写表**（`tools/check_naming.py` 会机械核对，越界即红）：
+
+| 声明 | 写法 | 例子 |
+|---|---|---|
+| `struct` / `type`（含枚举） | lowerCamel | `struct board`、`hashMap<K, V>`、`type side = ...` |
+| `trait` | UpperCamel | `trait Strategy` |
+| `fn` / 方法 | lowerCamel | `fn place`、`fn withCap` |
+| 整数常量（顶层 `const`） | UPPER_SNAKE | `const BOARD_SIZE: i64 = 225` |
+| 其它全局（顶层 `let` / `var`） | lowerCamel | `let version`、`var lastWinner` |
+| 类型参数 | 单大写字母 | `T`、`K`、`V` |
+| 私有实现 | lowerCamel + `@private` | `@private fn findSlot` |
+| 枚举变体 | lowerCamel | `type side = | black | white` |
+
+**顶层三种声明，按"值什么时候知道"分**：
+
+- `const NAME: T = <整数字面量>` —— 编译期常量。**还能当数组长度**（`[N][N]u8`）。
+  值的位置允许常量表达式（`const A: i64 = 15 * 15` 可用），但当长度只认字面量。
+- `let name: T = <常量表达式>` —— 不可变全局：字符串、枚举、结构体字面量的每个字段都是
+  常量表达式。字段不能引用别的全局（C 的静态初始化式不许引用 `static const` 对象）。
+- `var name: T` —— 可变全局，C 静态存储期零初始化。
+- 全局 = 深度 0：含引用的全局类型不能存在（没有东西可借）。
+- ⚠️ 全局变量名**不要与类型名同名**：生成的 C 里类型是 `typedef`、全局是 `static` 变量，
+  两者共用同一个标识符空间（实测 `let cfg: cfg = ...` 报 `redeclared as different kind of symbol`）。
+
+**一个概念一个拼写**（下面每一条都由门禁查，新的同义词会直接红）：
+
+- 元素个数一律 `len()`：没有 `length()` / `size()` / `used()`（屏幕尺寸是 `dims()`）。
+- 容量一律 `capacity()`：没有 `capOf()`。
+- 收缩分两种：缩到长度叫 `shrinkToFit()`；缩到指定长度叫 `shrink(k)`。
+- 构造：`new()` 与 `withX()`；提前留容量是 `string::withCapacity(n)` / `vector::withCap(n)`，
+  没有 `create()`。
+- 视图：借是 `view()` / `viewMut()`（没有 `asMutSlice()`）；要一份独立的拷贝写 `snapshot()`。
+- `find` 一律返回 `?i64`（没有 -1 哨兵）；内部槽位索引用 `findSlot()` 并且 `@private`。
+
+**模块**：`use std::data::vector` 显式导入；对外门面用 `pub use` 列清单，内部实现用
+`@private` 藏起来。公开的类型要配 `@code` 例子（公开面闸门会拿手册核对这些成员有没有被写到）。
 
 ## 9. 一个完整的对象
 
@@ -251,3 +282,5 @@ fn main() {
 - [ ] 热路径内层循环里没有分配、没有隐藏的 `clone` 吗？
 - [ ] 加了语言特性/标准库 API，是否同时更新了[语言现状](../reference/language.md) /
       [标准库现状](../reference/stdlib.md) 与 [特性总表](../reference/features.md)？
+- [ ] 新名字过了命名门禁吗（`python3 tools/check_naming.py --check`）？长度/容量/构造/视图
+      没有引入第二种拼写吗？
