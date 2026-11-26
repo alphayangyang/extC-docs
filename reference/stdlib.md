@@ -777,7 +777,7 @@ fn main() -> i32 {
 
 | 名字 | 签名（节选） |
 |---|---|
-| `ioError` | `\| readFailed(i32) \| lineTooLong(i64) \| writeFailed(i32) \| notATerminal(i32) \| closed(i32) \| destFull(i64)` |
+| `ioError` | `\| readFailed(i32) \| lineTooLong(i64) \| writeFailed(i32) \| notATerminal(i32) \| closed(i32) \| destFull(i64) \| atEof \| notANumber \| outOfRange(i64)` |
 | `cout` / `cerr` / `cin` | `ostream { fd: 1 }` / `errStream { }` / `istream { fd: 0 }` |
 | `endl` | `let endl: slice<u8> = "\n"` |
 | `ostream <<` | `i64` / `i32` / `i16` / `i8` / `u32` / `u16` / `u8` / `f64` / `f32` / `bool` / `slice<u8>` / `mut slice<u8>` |
@@ -838,6 +838,35 @@ fn main() -> i32 {
 ```
 实测 stdout：`writer-line` / `cout=42 1.5 true` / `0007|`；stderr：`cerr-line`。
 
+**控制台对象**：`stdin` / `stdout` / `stderr` 是三个零字段全局对象，方法形态与 `cin` / `cout` / `cerr` **并存**，
+而且是同一份缓冲、同一个读位置：一条程序里两种写法可以混着用（`tests/io/console_objects.extc` 钉住顺序）。
+
+| 对象 | 方法 |
+|---|---|
+| `stdin` | `nextByte` · `nextInt` · `nextI64` · `nextI32` · `nextLine` · `nextLineRaw` · `nextToken` · `skipSpace` · `eof` · `readSome` · `avail` · `buffered` · `bad` · `clear`；`std::text::string` 再给它 `readLine` · `readAll` · `readToken`（三个都返回 `?string`） |
+| `stdout` | `print` · `println` · `newline` · `flush` |
+| `stderr` | `print` · `println` · `newline` |
+
+读侧的口径：`readLine` / `readAll` / `readToken` 在字符串模块里（`io` 不能反向 `use` 字符串模块）；
+`nextInt` 读之前先看下一个非空白字节 —— 输入结束了是 `atEof`，不是数字开头是 `notANumber`，
+两者在调用点处理完全不同（一个收工、一个报坏数据）；`nextI32` 超出 `i32` 范围是 `outOfRange(v)`
+（**不截断**，`!` 不会把一个错值变成一个合法数）。`nextInt` 会吃掉数字后面的那个换行。
+
+```extc
+use std::io
+use std::text::string
+fn main() -> i32 {
+    io::stdout.println("对象形态")
+    io::stdout.print("两段")
+    io::stdout.newline()
+    io::stderr.println("诊断走 stderr")
+    io::stdout.flush()
+    io::cout << "链式写法照旧" << io::endl
+    return 0
+}
+```
+实测 stdout：`对象形态` / `两段` / `链式写法照旧`；stderr：`诊断走 stderr`。
+
 ### `std::fs`：打开文件的三个名字
 
 名字里必须能看出**读还是写、原内容还在不在**：
@@ -864,6 +893,8 @@ fn main() -> i32 {
 | `openRead` / `openWrite` / `openAppend` | `openWrite` 带 `O_TRUNC`，`openAppend` 带 `O_APPEND` |
 | `fs::fout` / `openOut` / `flushOut` / `closeOut` | **程序级**输出流，带缓冲（`<<` 接受 `slice<u8>` / `mut slice<u8>` / `i64` / `bool`） |
 | `fs::fin` / `openIn` / `closeIn` | 程序级输入流 |
+| `fs::fout.open` / `flush` / `close` | 程序级输出流的**对象口**（与 `openOut` / `flushOut` / `closeOut` 是同一份状态，混着用也行） |
+| `fs::fin.open` / `close` | 程序级输入流的**对象口**（与 `openIn` / `closeIn` 是同一份状态；关过之后可以重开） |
 | `outStream::failed` / `inStream::bad` | 失败标志 |
 
 ```extc
@@ -915,7 +946,10 @@ fn main() -> i32 {
                                  lineTooLong(n) => { io::cout << "lineTooLong\n" }
                                  writeFailed(fd) => { io::cout << "writeFailed\n" }
                                  closed(fd) => { io::cout << "closed\n" }
-                                 destFull(n) => { io::cout << "destFull\n" } } }
+                                 destFull(n) => { io::cout << "destFull\n" }
+                                 atEof => { io::cout << "atEof\n" }
+                                 notANumber => { io::cout << "notANumber\n" }
+                                 outOfRange(n) => { io::cout << "outOfRange\n" } } }
         success(t) => { var tt: io::terminal = t
                         tt.restore()?
                         tt.close()?
@@ -1072,6 +1106,34 @@ fn main() -> i32 {
 }
 ```
 实测：`kind=1 n=3 a1=2 c=x`（换行）`y` / `built={"k":"v","n":7} ok=true` / `bad-ok=false at=3`。
+**对象层**（`json::doc` + `json::value`）：把 `(text, nodes, idx)` 三片参数绑成两个视图值 —— 拷贝没有成本、也不分配：
+
+| 名字 | 一句话 |
+|---|---|
+| `doc::of(text, nodes, st)` | 先 `parse` 再 `of`：把解析结果与两片缓冲绑成一个值（两步分开，借用检查才说得清） |
+| `doc` | `ok` · `errAt` · `root` · `get("a.b.0")` · `member` · `at` · `count` |
+| `value` | `ok` · `kind` · `isObject` `isArray` `isString` `isNumber` `isBool` `isNull` · `count` · `member` · `at` · `nth` · `keyAt` · `find` · `raw` · `str(scratch)` · `int` · `num` · `truth` |
+
+`str` 无转义时零拷贝、有转义时解码进调用者的 `scratch`；`raw` 永远是原文视图。缺字段、越界、
+类型不符一律给 `none`；坏 JSON 由 `ok` / `errAt` 分开报。自由函数全部保留：要自己走链、自己 `match`
+节点时它们是唯一的路。
+
+```extc
+use std::io
+use std::json
+fn main() -> i32 {
+    var pool: [32]json::node
+    let text: slice<u8> = "{\"user\":{\"age\":42},\"xs\":[7,8]}"
+    let d: json::doc = json::doc::of(text, pool[..], json::parse(text, pool[..]))
+    if !d.ok() { io::cout << "parse-fail at " << d.errAt() << "\n"  return 1 }
+    var scratch: [32]u8
+    io::cout << "age=" << d.get("user.age")!.int()
+    io::cout << " x0=" << d.get("xs")!.at(0)!.int()
+    io::cout << " n=" << d.get("xs")!.count() << "\n"
+    return 0
+}
+```
+实测：`age=42 x0=7 n=2`。
 
 ### `std::text::string`：Base64（`b64Name` 之外的两个函数）
 
