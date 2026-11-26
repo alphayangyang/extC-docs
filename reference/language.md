@@ -160,7 +160,7 @@ fn main() -> i32 {
 | 写法 | 例子 | 说明 |
 |---|---|---|
 | 结构体 | `struct pt { x: i32, y: i32 }`（换行分隔也行） | 字段按**声明顺序**排布；分隔符是 `,` 或换行，与结构体字面量同一套规则 |
-| 方法 | 写在 `struct` 体内或 `impl pt { … }` 里 | 接收者必须显式声明：`self: ref pt` / `self: mut ref pt` |
+| 方法 | 写在 `struct` 体内、`impl pt { … }` 里，或 `impl color { … }`（枚举也挂得上） | 接收者必须显式声明：`self: ref pt` / `self: mut ref pt` |
 | 无载荷枚举 | `type color = \| red \| green \| blue` | 零值 = 第一个变体 |
 | 带载荷枚举 | `type shape = \| circle(f64) \| rect(f64, f64) \| dot` | 载荷没有字段名，按位置绑定；零值 = 第一个变体（其载荷必须可零初始化） |
 | 定长数组 | `[3]i32`、`[15][15]i32` | 长度是类型的一部分；`[1, 2, ...]` 的 `...` 把剩下的补零 |
@@ -595,6 +595,48 @@ impl slice<u8> {
 `` `impl` cannot extend a fixed array `[N]T` `` —— 要么把方法写进它元素类型的 `struct` 里，
 要么写在它切片后得到的 `slice<T>` 上。
 
+### 3.12 `impl` 也能给枚举挂方法
+
+`impl` 的目标可以是无载荷枚举、带载荷枚举，或泛型枚举的**某个实例**。方法集按类型算：
+`impl maybe<i64>` 的方法不会跑到 `maybe<i32>` 上。
+
+```extc
+// 结果：black true white / 4
+use std::io
+type stone = | empty | black | white
+type shape = | circle(f64) | side(f64)
+impl stone {
+    fn isBlack(self: ref stone) -> bool { return *self == stone.black }
+    fn flip(self: ref stone) -> stone {
+        match *self { empty => { return stone.black } black => { return stone.white } white => { return stone.empty } }
+    }
+    fn label(self: ref stone) -> slice<u8> {
+        match *self { empty => { return "empty" } black => { return "black" } white => { return "white" } }
+    }
+}
+impl shape {
+    fn area(self: ref shape) -> f64 {
+        match *self { circle(r) => { return 3.0 * r * r } side(a) => { return a * a } }
+    }
+}
+fn main() -> i32 {
+    var s: stone = stone.black
+    io::cout << s.label() << " " << s.isBlack() << " " << s.flip().label() << "\n"
+    let sh = shape.side(2.0)
+    io::cout << sh.area() << "\n"
+    return 0
+}
+```
+
+规则与边界：
+
+- 枚举有了方法集之后，`impl Trait for 枚举` 与 `dyn Trait(枚举值)` 一起可用（虚表照枚举的方法集建）。
+- `match` 的臂写**裸变体名**（`black =>`）；写 `stone.black =>` 报```expected `=>`, found `.````。
+- 泛型枚举目前只能**对实例**挂方法：`impl<T> maybe<T> { … }` 报
+  ````impl` on a generic enum declaration is not supported yet```，改成 `impl maybe<i64> { … }` 就行；
+  结构体没有这个限制（`impl<T> pair<T>` 合法）。
+- 运算符同样挂得上，但参数要写 `ref`：`*self == stone.black` 依赖
+  `fn ==(self: ref stone, other: ref stone) -> bool`（见「运算符与重载」）。
 ---
 
 ## 5. 协议：`trait` 与 `dyn`
@@ -658,6 +700,7 @@ fn main() -> i32 {
 |---|---|---|
 | `let NAME: T = e` | `let x: T = e` | 只读**命名**：不能重新赋值，也不能透过它写 |
 | `var NAME: T = e` | `var x: T = e` | 存储：可以赋值、可以取可写引用 |
+| `const NAME: T = e` | （只能写在顶层） | 常量：值在程序跑起来之前就定了，整数常量还能当数组长度 |
 | （`global` 前缀） | `global let/var x` | 冗余写法，顶层本来就是全局 |
 | `let NAME: T`（无 `=`） | `let x: T` | 零初始化（类型必须写出来） |
 | `var A, B: T = e1, e2` | `var a, b: i32 = 1, 2` | 一条声明绑多个名字：类型写一次，所有名字共享 |
@@ -711,6 +754,34 @@ var e: i64, f = 10, 20.5    // 各写各的：e 是 i64，f 是 f64
 var g, h: i32               // 零初始化：两个都是 0
 ```
 
+### 6.1 顶层 `const`：值先定，也能当数组长度
+
+`const NAME: T = e` 是模块级声明，和 `let` 一样不可写，多出来的承诺是**值在程序开始跑之前就已知**，
+所以它能出现在类型里当长度：`const N: i64 = 15` 之后可以写 `[N][N]i32`、
+`array<T, N>` 形状的字段（`struct grid { cells: [N][N]u8 }` 合法）。
+
+```extc
+// 结果：5x3 7 9 5
+use std::io
+const ROWS: i64 = 5
+const COLS: i64 = 3
+struct grid { cells: [ROWS][COLS]u8 }
+fn main() -> i32 {
+    var g: grid
+    g.cells[4][2] = u8(7)
+    var xs: [COLS]i64
+    xs[2] = i64(9)
+    io::cout << f"{ROWS}x{COLS}" << " " << g.cells[4][2] << " " << xs[2] << " " << ROWS << "\n"
+    return 0
+}
+```
+
+- 必须是**整数字面量**（可带负号）才能当长度：`const K: i64 = 1 + 2` 能当普通值用，
+  但当数组长度报```array length: `K` is a `const`, but not an integer literal```。
+- 必须有初始化式：`const N: i64` 报````const` needs an initializer```（零初始化的不可变全局是 `let`）。
+- 只能在顶层：`const` 写进函数体报````const` is a module-level declaration```；函数里要不可变绑定用 `let`。
+- 改一个 `const` 报```cannot assign to `N`, which is a `const````，不会说成 `let`。
+- 别的模块的 `const` 目前不能当长度用：长度取自同文件、写在类型上方的模块级 `const`。
 ---
 
 ## 7. 引用与视图
@@ -1343,6 +1414,10 @@ fn main() -> i32 {
 - `self` 必须是 `ref` / `mut ref` 本类型；右操作数可以是任意类型 —— 同一个运算符因此能
   按右操作数类型定义多份（`out << i64` 和 `out << f64` 共存）。
 - `!=` 由 `==` 取反**派生**（不必自己写）；`>` 不派生，要自己写。
+- 操作数怎么传由**形参类型**决定：形参写 `ref` 就是借，写值就是复制。所以 `@noCopy` 类型（容器）
+  的比较要把两个形参都写成 `ref`：`fn ==(self: ref vector<T>, other: ref vector<T>) -> bool` 之后
+  `a == b` 编得过、也不复制；右操作数写成按值（`other: T`）则编译错
+  ````T` is `@noCopy`: it may not be copied by value```（诊断就是在提醒改写 `ref`）。
 - `%` 对浮点永远不可用（`cannot apply '%' to 'f64'`），重载也不改变这一点。
 - 运算符方法**可以分配**：调用点和方法调用走同一套 zone 记账（`setOpCallArgs` 里的
   `setCallZoneArg`），所以 `fn +(self: ref string, other: slice<u8>) -> string` 这种"分配并

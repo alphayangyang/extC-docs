@@ -34,6 +34,7 @@ extC 是一门编译到 C11 的系统语言：没有虚拟机、没有共享运�
 | [内存回收](guide/memory-model.md) | 通俗讲法：作用域是地基、回收器兜什么、停顿与代价 |
 | [编译器内部结构](guide/internals.md) | 流水线 · 分层 · 闸门体系 · 构建产物 |
 | [编辑器支持](guide/editor.md) | VS Code 扩展：诊断/符号/悬停/补全，连不通怎么查 |
+| [风格指南](guide/style.md) | 把程序写成对象：方法形态、构造、错误、数据布局、命名 |
 
 ### 参考 `reference/` —— 有什么
 
@@ -42,6 +43,7 @@ extC 是一门编译到 C11 的系统语言：没有虚拟机、没有共享运�
 | [语言现状](reference/language.md) | 语法、类型、内存模型、错误与逃生舱、注解、语句与表达式 |
 | [标准库现状](reference/stdlib.md) | prelude 与各模块的公开面 |
 | [模块与 C 互操作](reference/modules-cabi.md) | 模块系统 · `extern!` · 导出 · 动态加载 |
+| [特性总表](reference/features.md) | 每个语言/标准库/互操作特性的手册锚点、状态与证据路径 |
 
 ### 解释 `design/` —— 为什么这么设计
 

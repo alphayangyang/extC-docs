@@ -98,7 +98,7 @@ prelude 是编译器在每个编译单元前先过一遍的一段 extC 源码。
 | 容量怎么涨 | **1.5 倍、原地长**（撞到预留上限才搬一次家，`relocations()` 数次数） |
 | 能不能装引用 | 能：写元素时经运行期的**外部边表**登记（键 = 槽地址），结构动作按区间撤销 |
 | 取内容 | `view()` 借出 `[0, len)` 的只读视图、`viewMut()` 借出可写视图；要独立拷贝用 `snapshot()` |
-| 深拷贝 | `clone()`；按内容比较写 `v.view() == w.view()`（容器是 `noCopy`，`v == w` 会移动两侧） |
+| 深拷贝 | `clone()`；按内容比较直接写 `v == w`（`==` 的两个形参都是 `ref`，不复制），`v.view() == w.view()` 也行 |
 | 收尾 | `shrink()`（尾部页还给系统）/ `release()`（整片预留还回，`drop` 也走这里） |
 | 迭代顺序 | 插入序（dense 连续） |
 
@@ -106,7 +106,7 @@ prelude 是编译器在每个编译单元前先过一遍的一段 extC 源码。
 `isEmpty` · `get`（给 `option<T>`） · `set`（越界返回 `false`，不 trap） · `[]` / `[]=`（越界 trap） ·
 `push` · `insert(i, v)` · `removeAt(i)` · `truncate(k)` · `pop` · `reserve(more)` ·
 `view`（只读视图） · `viewMut`（可写视图） · `snapshot`（拷贝） · `clone`（深拷贝） · `shrink` ·
-`clear` · `release` · `borrow`。`vector::from(xs)` 从一段视图拷出一个容器。
+`clear` · `release` · `borrow` · `contains(v)` · `indexOf(v)`（给 `option<i64>`） · `sort`（升序） · `reverse` · `fill(v)` · `==`（按内容比较，不复制）。`vector::from(xs)` 从一段视图拷出一个容器。
 
 结构动作的越界口径：`insert` 合法范围是 `[0, len]`，越界给 `false`；`removeAt` 越界给 `none`，
 否则返回被移出的元素；`truncate(k)` 把长度收到 `k`（被丢的元素跑 `drop`，容量不动）。
@@ -126,6 +126,39 @@ fn main() -> i32 {
 }
 ```
 实测：`vector n=3 cap=4 sum=6`。
+```extc
+use std::io
+use std::data::vector
+fn show(v: ref vector<i64>) {
+    var i: i64 = 0
+    while i < v.len() {
+        io::cout << v[i]
+        if i + 1 < v.len() { io::cout << "," }
+        i = i + 1
+    }
+}
+fn main() -> i32 {
+    var v: vector<i64> = vector<i64>::new()
+    v.push(i64(3))  v.push(i64(1))  v.push(i64(2))
+    io::cout << v.contains(i64(3)) << " " << v.contains(i64(9)) << "\n"
+    match v.indexOf(i64(2)) { some(i) => { io::cout << "first 2 at " << i << "\n" } none => { io::cout << "absent\n" } }
+    v.sort()
+    show(ref v)  io::cout << "\n"
+    v.reverse()
+    show(ref v)  io::cout << "\n"
+    var w: vector<i64> = v.clone()
+    io::cout << (v == w) << " " << (v != w) << "\n"
+    v.fill(i64(7))
+    show(ref v)  io::cout << "\n"
+    return 0
+}
+```
+实测：第一行 `true false`、命中的下标 `2`、排序后 `1,2,3`、反转后 `3,2,1`、
+`v == w` 为 `true`（比较不复制）、`fill` 之后 `7,7,7`。
+
+排序的口径：`sort` 是 `seq::sort` 的包装，要求元素类型定义了 `<`；
+元素没有 `<` 时**编译期**就报错（不是运行期什么都不做）：先给元素类型写 `fn <`，再调 `sort`。
+
 
 ### `buf<T>`：**拥有**一片地址预留的可增长缓冲区
 
@@ -385,7 +418,12 @@ fn main() -> i32 {
 | `remove` / `take` | `fn remove(k) -> bool` / `fn take(k) -> ?V`（搬出去，不是拷）|
 | `clear` / `compact` / `release` | 清（容量留着）、按活元素重排到刚好够的容量、整批还回去 |
 | 按桶位扫 | `keyAt(i)` / `valAt(i)` / `liveAt(i)`，`i` 走 `[0, capOf())`（**不是插入序**；桶位随重哈希变）|
+| 遍历 | `iterKeys()` / `iterValues()` 给遍历器（`iter`/`next`/`value` 三方法，见手册的迭代协议）：`for k in m.iterKeys()`，或 `while it.next() { it.value() }` |
 | `clone` | 深拷贝 |
+
+遍历器的名字**不是** `keys` / `values`（那是存储字段名，字段与方法不能同名），也**没有** `iter`：
+`for k in m` 会把 `@noCopy` 的表移进隐藏绑定，所以遍历要显式写 `m.iterKeys()`。遍历只读，不改变表，
+遍历完表照常可读。`hashMapI64<V>` 有同款 `iterKeys()` / `iterValues()`，键直接是 `i64`。
 
 **没有** `entry` / 按句柄读写 / 稠密值列：不承诺元素地址，要跨结构修改持有引用用 `std::weak`。
 
@@ -417,6 +455,27 @@ fn main() -> i32 {
 }
 ```
 实测：`had0=false had1=true v=91`。
+
+遍历表（元素按桶位顺序，**不是插入序**）：
+
+```extc
+use std::data::hashMap
+
+fn main() -> i32 {
+    var m: hashMap<i64Key, i64> = hashMap<i64Key, i64>::withCap(i64(8))
+    let _a = m.put(i64Key { v: 1 }, i64(10))
+    let _b = m.put(i64Key { v: 2 }, i64(20))
+    var sum: i64 = 0
+    for k in m.iterKeys() { sum += k.v }
+    for v in m.iterValues() { sum += v }
+    var it = m.iterKeys()
+    var n: i64 = 0
+    while it.next() { n += 1 }
+    println(f"{sum} {n}")
+    return 0
+}
+```
+实测：`33 2`。
 
 ```extc
 use std::io

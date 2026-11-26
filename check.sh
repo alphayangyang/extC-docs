@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 文档项目闸门：样式 -> 索引 -> 示例 -> 历史索引
+# 文档项目闸门：样式 -> 索引 -> 特性总表 -> 示例 -> 历史索引
 # 用法：./check.sh
 #       EXTC_SRC=/path/to/extC_Compiler ./check.sh   指定编译器仓库（默认 ../extC_Compiler）
 #       EXTC=/path/to/extc ./check.sh               指定编译器二进制
@@ -41,6 +41,7 @@ ok    $name"
 
 run_gate "样式：状态块 / 数字锚点 / 绝对路径 / 历史词 / 链接" python3 "$DOCS_DIR/tools/check_style.py" --gate
 run_gate "索引：README 与活文档集合一致" python3 "$DOCS_DIR/tools/check_index.py" --gate
+run_gate "特性：总表覆盖每章手册，证据路径存在" python3 "$DOCS_DIR/tools/check_features.py" --gate
 run_gate "示例：活文档里的 extC 围栏编译并运行" python3 "$DOCS_DIR/tools/check_examples.py" --gate
 run_gate "历史：changelog 月份页与索引一致" python3 "$DOCS_DIR/tools/check_changelog.py" --gate
 
