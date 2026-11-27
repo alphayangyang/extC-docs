@@ -882,6 +882,15 @@ fn main() {
   诊断指出该写什么。
 - **标准库按这条规矩写**：只读参数收视图或 `ref`，不收拥有型的值 —— `string` 的 `==` / `<` /
   `concat` / `+` / `+=` 右操作数、`io::cout << s` 都是借；要第二个所有者时由 `clone()` 显式写出。
+- **返回本帧容器的视图被拒**：容器在块结束时把存储交还，视图会悬垂，所以
+  `fn lend() -> slice<i64> { var v: vector<i64> = vector<i64>::new()  ...  return v.view() }` 报
+  ``this return value is a view of `vector::vector<i64>`, whose storage this frame releases when it ends``，
+  note 提示 ``take a copy (`snapshot()`) before returning the view, or return the container itself``；
+  先绑成 `let s = v.view()` 再 `return s` 同样被拒。借参数（`v: ref vector<i64>`）、
+  `snapshot()`、直接返回容器本身、字符串字面量都不受影响；`string` 与 `buf<T>` 同一条规则。
+- **视图不能整体赋值**：`b[..] = a[..]` 不是逐元素拷贝（视图是两个字的手柄），报
+  `cannot assign to a view as a whole: a view is a borrowed window, so assigning it would copy nothing`；
+  整个定长数组写 `b = a`，通过视图拷元素写 `copyInto(dst, src, n)`。
 - **借出不是内建名单**：任何类型只要方法 `view() -> slice<T>`（只读）或
   `viewMut() -> mut slice<T>`（可写）的**返回类型**对得上，就能出现在这类参数上 ——
   判据是签名，不是容器是哪个内建类型。`vector` 与定长数组只是现成的两个做法。
@@ -905,6 +914,36 @@ fn main() -> i32 {
     io::cout << mid.len << " " << all[0] << " " << tailOnly[1] << " " << sum(a[1..4]) << "\n"
     let s = "hello world"
     io::cout << s[0..5] << " " << s[6..] << " " << s[2..2].len << "\n"
+    return 0
+}
+```
+
+容器把存储交给视图看的时候，**谁负责存储**决定了视图能不能被返回：
+
+```extc
+// 结果：7 7 8 7
+use std::data::vector
+use std::io
+
+fn borrow(v: ref vector<i64>) -> slice<i64> {
+    return v.view()
+}
+
+fn copy() -> slice<i64> {
+    var v: vector<i64> = vector<i64>::new()
+    v.push(i64(7))
+    v.push(i64(8))
+    return v.snapshot()
+}
+
+fn main() -> i32 {
+    var v: vector<i64> = vector<i64>::new()
+    v.push(i64(7))
+    io::cout << borrow(ref v)[0] << " " << copy()[0] << " " << copy()[1] << " "
+    var a: [2]i8 = [7, 8]
+    var b: [2]i8
+    b = a
+    io::println(f"{b[0]}")
     return 0
 }
 ```

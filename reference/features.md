@@ -48,7 +48,7 @@
 | 三种引用的形状与借用边界 | [language.md](language.md) · `7. 引用与视图` | 实现 | `examples/refs.extc` |
 | ref / mut ref / ?ref 能指向什么 | [language.md](language.md) · `7.1 三种引用` | 实现 | `examples/refs.extc` |
 | 什么时候要写 * | [language.md](language.md) · `7.2 解引用与自动解引用` | 实现 | `examples/deref.extc` |
-| 视图的坐标、切片、可写视图与只读视图的关系 | [language.md](language.md) · 7.3 视图 `slice<T>` | 实现 | `examples/slices.extc` |
+| 视图的坐标、切片、可写视图与只读视图的关系，以及视图的返回与整体赋值（悬垂视图被拒、`copyInto`） | [language.md](language.md) · 7.3 视图 `slice<T>` | 实现 | `examples/slices.extc` · `tests/features/views` |
 | 定长数组的整数组表达式（rank-1 子集） | [language.md](language.md) · 7.4 整数组表达式 `out = a + b` | 部分 | `examples/array-expr.extc` |
 | 默认输入口径与显式读取 | [language.md](language.md) · `7.5 输入：默认"读一行再解析"` | 实现 | `tests/io` |
 | 相邻循环自动融合（输入/输出配对） | [language.md](language.md) · `7.6 相邻循环的融合（临时视图消失）` | 实现 | `tests/fuse` |
