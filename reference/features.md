@@ -46,6 +46,8 @@
 | let/var/多名字声明、遮蔽、零初始化、全局的常量初始化式 | [language.md](language.md) · `6. 变量与可变性` | 实现 | `examples/shadowing.extc` |
 | 模块级 const，整数常量当数组长度 | [language.md](language.md) · 6.1 顶层 `const`：值先定，也能当数组长度 | 实现 | `tests/constgen/const_global.extc` · `tests/constgen/run.sh` |
 | 三种引用的形状与借用边界 | [language.md](language.md) · `7. 引用与视图` | 实现 | `examples/refs.extc` |
+| 借用模型：只有「拥有存储的位置」与「指向别人的借用」，五条规则与决策表 | [language.md](language.md) · `借用模型：五条规则与决策表` | 实现 | `tests/features/borrow` |
+| `ref T` / `mut ref T` 形参在调用点自动借出实参所在的位置（显式 `ref` 仍可用）；借用诊断用行为描述，不含深度数字 | [language.md](language.md) · `7.1 三种引用` | 实现 | `tests/features/borrow` |
 | ref / mut ref / ?ref 能指向什么 | [language.md](language.md) · `7.1 三种引用` | 实现 | `examples/refs.extc` |
 | 什么时候要写 * | [language.md](language.md) · `7.2 解引用与自动解引用` | 实现 | `examples/deref.extc` |
 | 视图的坐标、切片、可写视图与只读视图的关系，以及视图的返回与整体赋值（悬垂视图被拒、`copyInto`） | [language.md](language.md) · 7.3 视图 `slice<T>` | 实现 | `examples/slices.extc` · `tests/features/views` |
